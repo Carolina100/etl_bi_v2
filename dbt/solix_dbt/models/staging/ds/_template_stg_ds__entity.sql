@@ -18,6 +18,7 @@
 {% set SOURCE_TABLE_NAME = 'nome_da_tabela_d' %}
 
 {{ config(
+    enabled=false,
     materialized='view',
     tags=['staging', 'ds', 'nome_da_tabela_d']
 ) }}

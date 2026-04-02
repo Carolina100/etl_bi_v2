@@ -26,6 +26,7 @@
 {% set NATURAL_KEY_COLUMNS = ['ID_CLIENTE', 'CODIGO_NEGOCIO'] %}
 
 {{ config(
+    enabled=false,
     materialized='incremental',
     alias=MODEL_ALIAS,
     incremental_strategy='merge',

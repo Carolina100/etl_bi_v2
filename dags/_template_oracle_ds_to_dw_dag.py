@@ -34,9 +34,6 @@ if str(PROJECT_ROOT) not in sys.path:
 # ============================================================================
 # TROQUE AQUI - IMPORTS DA PIPELINE
 # ============================================================================
-from src.audit.audit_repository import AuditRepository  # noqa: E402
-from src.load.snowflake_loader import SnowflakeLoader  # noqa: E402
-from src.pipelines.load_sx_estado_d import run_pipeline  # noqa: E402
 from src.utils.airflow_helpers import normalize_client_conf, run_dbt_command  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -54,6 +51,8 @@ DW_PIPELINE_NAME = "dw_nome_da_tabela_d_dbt"
 DW_SOURCE_NAME = "DBT.SOLIX_BI.DS.NOME_DA_TABELA_D"
 DW_TARGET_NAME = "SOLIX_BI.DW.NOME_DA_TABELA_D"
 DW_MAIN_STEP_NAME = "DBT_BUILD"
+DS_QUEUE = "ds"
+DBT_QUEUE = "dbt"
 
 # ============================================================================
 # TROQUE AQUI - POLITICA DE EXECUCAO
@@ -121,6 +120,8 @@ def load_template_dag():
         max_retry_delay=timedelta(minutes=30),
     )
     def run_ds_pipeline_task(request: dict[str, Any]) -> dict[str, Any]:
+        from src.pipelines.load_sx_estado_d import run_pipeline
+
         return run_pipeline(
             id_cliente=int(request["id_cliente"]),
             data_inicio_text=str(request["data_inicio"]),
@@ -133,6 +134,9 @@ def load_template_dag():
         retry_delay=timedelta(minutes=DW_RETRY_DELAY_MINUTES),
     )
     def run_dw_dbt_task(ds_results: list[dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
+        from src.audit.audit_repository import AuditRepository
+        from src.load.snowflake_loader import SnowflakeLoader
+
         materialized_ds_results = list(ds_results)
         profiles_dir = os.getenv("DBT_PROFILES_DIR", str(DBT_PROJECT_DIR))
         audit_loader = SnowflakeLoader()
@@ -222,10 +226,10 @@ def load_template_dag():
             except Exception:
                 logger.exception("Falha ao fechar conexao de auditoria do DW.")
 
-    prepared_params = validate_and_prepare_params()
-    ds_requests = build_ds_requests(prepared_params)
-    ds_results = run_ds_pipeline_task.expand(request=ds_requests)
-    run_dw_dbt_task(ds_results, prepared_params)
+    prepared_params = validate_and_prepare_params.override(queue=DS_QUEUE)()
+    ds_requests = build_ds_requests.override(queue=DS_QUEUE)(prepared_params)
+    ds_results = run_ds_pipeline_task.override(queue=DS_QUEUE).expand(request=ds_requests)
+    run_dw_dbt_task.override(queue=DBT_QUEUE)(ds_results, prepared_params)
 
 
 load_template = load_template_dag()

@@ -26,6 +26,17 @@ etl_bi/
 - `dbt/solix_dbt/models/marts/dimensions/`: dimensoes DW
 - `src/audit/`: auditoria DS e DW
 
+## Arquitetura de execução
+
+- `src/pipelines/`: runtime Python da camada DS
+- `dbt/solix_dbt/`: runtime dbt da camada DW
+- `dags/`: orquestração Airflow
+- `docker-compose.local.yml`: stack local com Airflow + Postgres + Redis + workers separados
+- `infra/airflow/`: imagem base do Airflow para scheduler/webserver/triggerer
+- `infra/runtime/python/`: imagem do worker DS
+- `infra/runtime/dbt/`: imagem do worker DW/dbt
+- `.env.local` / `.env.docker`: configuracoes separadas para Windows local e Docker local
+
 ## Execução local
 
 ### DS
@@ -44,8 +55,16 @@ dbt build --select stg_ds__sx_estado_d dim_sx_estado_d
 
 ### Fluxo completo via Airflow
 
-- subir Airflow local em `C:\airflow-local`
+- preparar `.env.docker` e a chave em `secrets/snowflake/ETL_KEYPAIR.p8`
+- subir a stack local com `docker compose -f docker-compose.local.yml up --build`
+- acessar Airflow em `http://localhost:8080`
 - disparar a DAG `load_sx_estado_d_dag`
+
+### Filas e workers
+
+- tasks DS rodam na fila `ds`
+- tasks dbt/DW rodam na fila `dbt`
+- scheduler e webserver nao precisam carregar dependencias pesadas de Oracle/dbt
 
 ## GitHub
 
@@ -77,8 +96,9 @@ Sugestao de tags:
 O projeto ja esta preparado para:
 
 - virar pacote Python via `pyproject.toml`
-- subir em imagem customizada do Airflow
-- usar variaveis de ambiente em vez de credenciais fixas
+- subir em imagem base de Airflow separada dos workers especializados
+- usar workers especializados por fila para DS e dbt
+- usar variaveis de ambiente e secret files em vez de credenciais fixas
 
 ## Próximos passos naturais
 

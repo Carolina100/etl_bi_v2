@@ -17,9 +17,6 @@ PROJECT_ROOT = Path(
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.pipelines.load_sx_estado_d import run_pipeline  # noqa: E402
-from src.audit.audit_repository import AuditRepository  # noqa: E402
-from src.load.snowflake_loader import SnowflakeLoader  # noqa: E402
 from src.utils.airflow_helpers import normalize_client_conf, run_dbt_command  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -56,6 +53,8 @@ DW_PIPELINE_NAME = "dw_sx_estado_d_dbt"
 DW_SOURCE_NAME = "DBT.SOLIX_BI.DS.SX_ESTADO_D"
 DW_TARGET_NAME = "SOLIX_BI.DW.SX_ESTADO_D"
 DW_MAIN_STEP_NAME = "DBT_BUILD"
+DS_QUEUE = "ds"
+DBT_QUEUE = "dbt"
 
 # ============================================================================
 # ESTRATEGIA DE AGENDAMENTO E RETRIES
@@ -149,6 +148,8 @@ def load_sx_estado_d_dag():
         max_retry_delay=timedelta(minutes=30),
     )
     def run_ds_pipeline_task(request: dict[str, Any]) -> dict[str, Any]:
+        from src.pipelines.load_sx_estado_d import run_pipeline
+
         logger.info(
             "Executando camada DS para id_cliente=%s, data_inicio=%s, data_fim=%s",
             request["id_cliente"],
@@ -171,6 +172,9 @@ def load_sx_estado_d_dag():
         retry_delay=timedelta(minutes=DW_RETRY_DELAY_MINUTES),
     )
     def run_dw_dbt_task(ds_results: list[dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
+        from src.audit.audit_repository import AuditRepository
+        from src.load.snowflake_loader import SnowflakeLoader
+
         materialized_ds_results = list(ds_results)
         profiles_dir = os.getenv("DBT_PROFILES_DIR", str(DBT_PROJECT_DIR))
         audit_loader = SnowflakeLoader()
@@ -305,10 +309,10 @@ def load_sx_estado_d_dag():
             except Exception:
                 logger.exception("Falha ao fechar conexao de auditoria do DW.")
 
-    prepared_params = validate_and_prepare_params()
-    ds_requests = build_ds_requests(prepared_params)
-    ds_results = run_ds_pipeline_task.expand(request=ds_requests)
-    run_dw_dbt_task(ds_results, prepared_params)
+    prepared_params = validate_and_prepare_params.override(queue=DS_QUEUE)()
+    ds_requests = build_ds_requests.override(queue=DS_QUEUE)(prepared_params)
+    ds_results = run_ds_pipeline_task.override(queue=DS_QUEUE).expand(request=ds_requests)
+    run_dw_dbt_task.override(queue=DBT_QUEUE)(ds_results, prepared_params)
 
 
 load_sx_estado_d = load_sx_estado_d_dag()
