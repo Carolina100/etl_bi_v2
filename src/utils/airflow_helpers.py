@@ -57,9 +57,9 @@ def run_dbt_command(
 ) -> dict[str, Any]:
     ensure_env_var("SNOWFLAKE_ACCOUNT")
     ensure_env_var("SNOWFLAKE_USER")
-    ensure_env_var("SNOWFLAKE_PASSWORD")
     ensure_env_var("SNOWFLAKE_WAREHOUSE")
     ensure_env_var("SNOWFLAKE_ROLE_DBT")
+    ensure_env_var("SNOWFLAKE_PRIVATE_KEY_PATH")
 
     target_dir = Path(dbt_project_dir) / "target"
     if target_dir.exists():

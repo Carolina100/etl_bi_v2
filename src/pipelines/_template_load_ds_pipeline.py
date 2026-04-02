@@ -13,6 +13,7 @@ import snowflake.connector
 from src.audit.audit_repository import AuditRepository
 from src.common.config import Settings
 from src.common.logger import get_logger
+from src.common.snowflake_auth import build_snowflake_connection_kwargs, validate_snowflake_auth_settings
 from src.load.snowflake_loader import SnowflakeLoader
 
 logger = get_logger(__name__)
@@ -103,7 +104,6 @@ def validate_required_settings() -> None:
         "ORACLE_PASSWORD": Settings.ORACLE_PASSWORD,
         "SNOWFLAKE_ACCOUNT": Settings.SNOWFLAKE_ACCOUNT,
         "SNOWFLAKE_USER": Settings.SNOWFLAKE_USER,
-        "SNOWFLAKE_PASSWORD": Settings.SNOWFLAKE_PASSWORD,
         "SNOWFLAKE_WAREHOUSE": Settings.SNOWFLAKE_WAREHOUSE,
         "SNOWFLAKE_DATABASE": Settings.SNOWFLAKE_DATABASE,
         "SNOWFLAKE_SCHEMA": Settings.SNOWFLAKE_SCHEMA,
@@ -125,6 +125,8 @@ def validate_required_settings() -> None:
             + ", ".join(sorted(valid_driver_modes))
         )
 
+    validate_snowflake_auth_settings()
+
 
 def parse_date(date_text: str) -> datetime.date:
     try:
@@ -138,13 +140,9 @@ def parse_date(date_text: str) -> datetime.date:
 def get_snowflake_connection():
     logger.info("Abrindo conexao com Snowflake.")
     return snowflake.connector.connect(
-        account=Settings.SNOWFLAKE_ACCOUNT,
-        user=Settings.SNOWFLAKE_USER,
-        password=Settings.SNOWFLAKE_PASSWORD,
-        warehouse=Settings.SNOWFLAKE_WAREHOUSE,
-        database=Settings.SNOWFLAKE_DATABASE,
-        schema=Settings.SNOWFLAKE_SCHEMA,
-        role=Settings.SNOWFLAKE_ROLE_INGESTAO,
+        **build_snowflake_connection_kwargs(
+            role=Settings.SNOWFLAKE_ROLE_INGESTAO,
+        )
     )
 
 

@@ -2,17 +2,14 @@ from pathlib import Path
 import snowflake.connector
 
 from src.common.config import Settings
+from src.common.snowflake_auth import build_snowflake_connection_kwargs
 
 class SnowflakeLoader:
     def __init__(self) -> None:
         self.conn = snowflake.connector.connect(
-            account=Settings.SNOWFLAKE_ACCOUNT,
-            user=Settings.SNOWFLAKE_USER,
-            password=Settings.SNOWFLAKE_PASSWORD,
-            warehouse=Settings.SNOWFLAKE_WAREHOUSE,
-            database=Settings.SNOWFLAKE_DATABASE,
-            schema=Settings.SNOWFLAKE_SCHEMA,
-            role=Settings.SNOWFLAKE_ROLE_INGESTAO,
+            **build_snowflake_connection_kwargs(
+                role=Settings.SNOWFLAKE_ROLE_INGESTAO,
+            )
         )
 
     def close(self) -> None:
