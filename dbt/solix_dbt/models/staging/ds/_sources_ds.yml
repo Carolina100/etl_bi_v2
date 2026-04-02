@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: ds
+    description: "Camada DS no Snowflake alimentada pelas pipelines Python."
+    database: SOLIX_BI
+    schema: DS
+    tables:
+      - name: sx_estado_d
+        identifier: SX_ESTADO_D
+        description: "Tabela de estados carregada no DS pela pipeline Python."

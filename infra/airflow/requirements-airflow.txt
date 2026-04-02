@@ -1,0 +1,5 @@
+pandas
+python-dotenv
+oracledb
+snowflake-connector-python[pandas]
+dbt-snowflake==1.11.3

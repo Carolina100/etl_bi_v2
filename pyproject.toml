@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "etl-bi"
+version = "0.1.0"
+description = "Pipelines Oracle -> Snowflake DS -> dbt DW com orquestracao em Airflow."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pandas==2.2.3",
+  "python-dotenv==1.0.1",
+  "oracledb==2.2.1",
+  "snowflake-connector-python[pandas]==3.12.2",
+]
+
+[project.optional-dependencies]
+airflow = [
+  "dbt-snowflake==1.11.3",
+]
+dev = [
+  "dbt-snowflake==1.11.3",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+

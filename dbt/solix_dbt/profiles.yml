@@ -1,0 +1,28 @@
+# ============================================================================
+# PROFILE EXEMPLO DO DBT
+#
+# LOCAL:
+# - mantenha um unico .env na raiz do projeto
+# - antes de rodar dbt, carregue essas variaveis no terminal
+#
+# PRODUCAO:
+# - essas mesmas variaveis devem vir do ambiente
+# - Kubernetes / Airflow / secret manager devem injetar os valores
+# ============================================================================
+
+etl_bi_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE_DBT') }}"
+      database: SOLIX_BI
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      schema: DW
+      threads: 4
+      client_session_keep_alive: false
+      session_parameters:
+        TIMEZONE: America/Sao_Paulo

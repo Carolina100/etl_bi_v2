@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: stg_ds__sx_estado_d
+    description: "Modelo staging da tabela DS SX_ESTADO_D."
+    columns:
+      - name: ID_CLIENTE
+        tests:
+          - not_null
+      - name: CD_ESTADO
+        tests:
+          - not_null
+      - name: DESC_ESTADO
+        tests:
+          - not_null

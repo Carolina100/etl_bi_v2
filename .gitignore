@@ -1,0 +1,39 @@
+# Secrets e configuracoes locais
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+
+# Build / empacotamento
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# dbt
+dbt/**/target/
+dbt/**/logs/
+dbt/**/.user.yml
+
+# Airflow local
+logs/
+config/
+plugins/
+
+# Artefatos locais do projeto
+Documents/
+*.log
+
+# Oracle Instant Client local para build
+infra/airflow/oracle/
