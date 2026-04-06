@@ -88,8 +88,8 @@ MAX_ACTIVE_TASKS = 4
     params={
         "id_cliente": Param(1, type=["null", "integer"], minimum=1),
         "id_clientes": Param(None, type=["null", "array"]),
-        "data_inicio": Param("2026-03-01", type="string"),
-        "data_fim": Param("2026-03-31", type="string"),
+        "data_inicio": Param(None, type=["null", "string"]),
+        "data_fim": Param(None, type=["null", "string"]),
     },
 )
 def load_template_dag():
@@ -124,8 +124,8 @@ def load_template_dag():
 
         return run_pipeline(
             id_cliente=int(request["id_cliente"]),
-            data_inicio_text=str(request["data_inicio"]),
-            data_fim_text=str(request["data_fim"]),
+            data_inicio_text=request["data_inicio"],
+            data_fim_text=request["data_fim"],
         )
 
     @task(
@@ -143,6 +143,18 @@ def load_template_dag():
         audit_repository = AuditRepository(audit_loader)
         dw_batch_id = uuid.uuid4().hex
         audit_id_cliente = payload["id_clientes"][0] if len(payload["id_clientes"]) == 1 else -1
+        resolved_window_starts = sorted(
+            str(result["window_start"])
+            for result in materialized_ds_results
+            if isinstance(result, dict) and result.get("window_start")
+        )
+        resolved_window_ends = sorted(
+            str(result["window_end"])
+            for result in materialized_ds_results
+            if isinstance(result, dict) and result.get("window_end")
+        )
+        audit_dt_inicio = resolved_window_starts[0] if resolved_window_starts else datetime.now().isoformat()
+        audit_dt_fim = resolved_window_ends[-1] if resolved_window_ends else datetime.now().isoformat()
 
         try:
             audit_repository.insert_batch_start(
@@ -151,8 +163,8 @@ def load_template_dag():
                 source_name=DW_SOURCE_NAME,
                 target_name=DW_TARGET_NAME,
                 id_cliente=audit_id_cliente,
-                dt_inicio=payload["data_inicio"],
-                dt_fim=payload["data_fim"],
+                dt_inicio=audit_dt_inicio,
+                dt_fim=audit_dt_fim,
             )
 
             result = run_dbt_command(
@@ -172,10 +184,10 @@ def load_template_dag():
                 target_name=DW_TARGET_NAME,
                 status="SUCCESS",
                 rows_processed=rows_affected_total,
-                details="dbt build concluido com sucesso.",
+                details=f"dbt build concluido com sucesso. load_mode={payload['load_mode']}.",
                 id_cliente=audit_id_cliente,
-                dt_inicio=payload["data_inicio"],
-                dt_fim=payload["data_fim"],
+                dt_inicio=audit_dt_inicio,
+                dt_fim=audit_dt_fim,
             )
 
             for model_result in model_results:
@@ -189,8 +201,8 @@ def load_template_dag():
                     rows_processed=int(model_result.get("rows_affected") or 0),
                     details=f"query_id={model_result.get('query_id')}",
                     id_cliente=audit_id_cliente,
-                    dt_inicio=payload["data_inicio"],
-                    dt_fim=payload["data_fim"],
+                    dt_inicio=audit_dt_inicio,
+                    dt_fim=audit_dt_fim,
                 )
 
             audit_repository.update_batch_success(
@@ -210,8 +222,8 @@ def load_template_dag():
                     rows_processed=0,
                     details=str(exc),
                     id_cliente=audit_id_cliente,
-                    dt_inicio=payload["data_inicio"],
-                    dt_fim=payload["data_fim"],
+                    dt_inicio=audit_dt_inicio,
+                    dt_fim=audit_dt_fim,
                 )
                 audit_repository.update_batch_error(
                     batch_id=dw_batch_id,

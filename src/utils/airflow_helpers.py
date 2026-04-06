@@ -39,13 +39,21 @@ def normalize_client_conf(raw_conf: dict[str, Any]) -> dict[str, Any]:
             "Informe 'id_cliente' ou 'id_clientes' no dag_run.conf."
         )
 
-    data_inicio = str(raw_conf["data_inicio"])
-    data_fim = str(raw_conf["data_fim"])
+    data_inicio = raw_conf.get("data_inicio")
+    data_fim = raw_conf.get("data_fim")
+    manual_window_informed = data_inicio is not None or data_fim is not None
+    if manual_window_informed and not (data_inicio and data_fim):
+        raise AirflowFailException(
+            "Informe 'data_inicio' e 'data_fim' juntos para backfill manual."
+        )
+
+    load_mode = "MANUAL_BACKFILL" if manual_window_informed else "INCREMENTAL_WATERMARK"
 
     return {
         "id_clientes": normalized_ids,
-        "data_inicio": data_inicio,
-        "data_fim": data_fim,
+        "data_inicio": str(data_inicio) if data_inicio else None,
+        "data_fim": str(data_fim) if data_fim else None,
+        "load_mode": load_mode,
     }
 
 

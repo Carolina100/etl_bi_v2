@@ -1,4 +1,5 @@
 from pathlib import Path
+import uuid
 import snowflake.connector
 
 from src.common.config import Settings
@@ -18,6 +19,11 @@ class SnowflakeLoader:
     def execute(self, sql: str) -> None:
         with self.conn.cursor() as cur:
             cur.execute(sql)
+
+    def fetch_one(self, sql: str):
+        with self.conn.cursor() as cur:
+            cur.execute(sql)
+            return cur.fetchone()
 
     def upload_file_to_stage(self, local_file_path: str, stage_name: str) -> None:
         resolved = Path(local_file_path).resolve().as_posix()
@@ -49,3 +55,63 @@ class SnowflakeLoader:
         )
         """
         self.execute(sql)
+
+    def merge_file_into_table(
+        self,
+        *,
+        full_table_name: str,
+        stage_name: str,
+        file_name: str,
+        file_format_name: str,
+        columns: list[str],
+        key_columns: list[str],
+        preserve_on_update_columns: list[str] | None = None,
+        update_current_timestamp_columns: list[str] | None = None,
+    ) -> None:
+        temp_table_name = f"TMP_{uuid.uuid4().hex[:20].upper()}"
+        preserve_on_update_columns = preserve_on_update_columns or []
+        update_current_timestamp_columns = update_current_timestamp_columns or []
+        update_columns = [column for column in columns if column not in key_columns]
+        merge_condition = " AND ".join(f"t.{column} = s.{column}" for column in key_columns)
+        update_assignments: list[str] = []
+        for column in update_columns:
+            if column in preserve_on_update_columns:
+                update_assignments.append(f"t.{column} = COALESCE(t.{column}, s.{column})")
+            elif column in update_current_timestamp_columns:
+                update_assignments.append(
+                    "t."
+                    + column
+                    + " = CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+                )
+            else:
+                update_assignments.append(f"t.{column} = s.{column}")
+
+        update_set = ",\n            ".join(update_assignments)
+        insert_columns = ", ".join(columns)
+        insert_values = ", ".join(f"s.{column}" for column in columns)
+        copy_columns = " (\n            " + ",\n            ".join(columns) + "\n        )"
+
+        self.execute(f"CREATE OR REPLACE TEMP TABLE {temp_table_name} LIKE {full_table_name}")
+        self.execute(
+            f"""
+            COPY INTO {temp_table_name}{copy_columns}
+            FROM {stage_name}/{file_name}
+            FILE_FORMAT = (
+                FORMAT_NAME = {file_format_name}
+                SKIP_HEADER = 1
+            )
+            """
+        )
+        self.execute(
+            f"""
+            MERGE INTO {full_table_name} AS t
+            USING {temp_table_name} AS s
+                ON {merge_condition}
+            WHEN MATCHED THEN
+                UPDATE SET
+                    {update_set}
+            WHEN NOT MATCHED THEN
+                INSERT ({insert_columns})
+                VALUES ({insert_values})
+            """
+        )

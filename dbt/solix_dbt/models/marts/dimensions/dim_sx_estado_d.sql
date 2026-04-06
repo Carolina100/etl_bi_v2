@@ -56,7 +56,8 @@ with staged_source as (
         CD_ESTADO,
         DESC_ESTADO,
         ETL_BATCH_ID,
-        ETL_LOADED_AT
+        BI_CREATED_AT,
+        BI_UPDATED_AT
     from {{ ref(STAGING_MODEL_NAME) }}
 ),
 
@@ -83,7 +84,8 @@ business_rows as (
         staged_source.CD_ESTADO,
         staged_source.DESC_ESTADO,
         staged_source.ETL_BATCH_ID,
-        convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as ETL_LOADED_AT
+        staged_source.BI_CREATED_AT,
+        staged_source.BI_UPDATED_AT
     from staged_source
     left join existing_dimension
         on staged_source.ID_CLIENTE = existing_dimension.ID_CLIENTE
@@ -97,8 +99,9 @@ orphan_row as (
         cast('-1' as varchar) as CD_ESTADO,
         cast('NAO INFORMADO' as varchar) as DESC_ESTADO,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
-        convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as ETL_LOADED_AT
-),
+        convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
+        convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
+),    
 
 final as (
     select * from orphan_row
@@ -112,5 +115,6 @@ select
     CD_ESTADO,
     DESC_ESTADO,
     ETL_BATCH_ID,
-    ETL_LOADED_AT
+    BI_CREATED_AT,
+    BI_UPDATED_AT
 from final

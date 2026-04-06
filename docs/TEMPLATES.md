@@ -2,6 +2,12 @@
 
 Este arquivo resume o que copiar para criar uma nova tabela no fluxo completo `Oracle -> DS -> DW`.
 
+Observacao:
+
+- o padrao atual da camada DS e incremental por watermark com fallback de backfill manual
+- para novas tabelas, use `load_sx_estado_d.py` como referencia funcional mais completa, alem do template base
+- detalhes operacionais em [INCREMENTAL_LOADING.md](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/docs/INCREMENTAL_LOADING.md)
+
 ## Ordem recomendada
 
 1. Copiar a pipeline DS:

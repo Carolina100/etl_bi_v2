@@ -99,8 +99,8 @@ MAX_ACTIVE_TASKS = 4
     params={
         "id_cliente": Param(1, type=["null", "integer"], minimum=1),
         "id_clientes": Param(None, type=["null", "array"]),
-        "data_inicio": Param("2026-03-01", type="string"),
-        "data_fim": Param("2026-03-31", type="string"),
+        "data_inicio": Param(None, type=["null", "string"]),
+        "data_fim": Param(None, type=["null", "string"]),
     },
 )
 def load_sx_estado_d_dag():
@@ -120,8 +120,9 @@ def load_sx_estado_d_dag():
         normalized_conf = normalize_client_conf(raw_conf)
 
         logger.info(
-            "Parametros validados. id_clientes=%s, data_inicio=%s, data_fim=%s",
+            "Parametros validados. id_clientes=%s, load_mode=%s, data_inicio=%s, data_fim=%s",
             normalized_conf["id_clientes"],
+            normalized_conf["load_mode"],
             normalized_conf["data_inicio"],
             normalized_conf["data_fim"],
         )
@@ -159,8 +160,8 @@ def load_sx_estado_d_dag():
 
         result = run_pipeline(
             id_cliente=int(request["id_cliente"]),
-            data_inicio_text=str(request["data_inicio"]),
-            data_fim_text=str(request["data_fim"]),
+            data_inicio_text=request["data_inicio"],
+            data_fim_text=request["data_fim"],
         )
 
         logger.info("Camada DS concluida com resultado: %s", result)
@@ -195,12 +196,26 @@ def load_sx_estado_d_dag():
         )
 
         logger.info(
-            "Iniciando camada DW via dbt. profiles_dir=%s, select=%s, clientes=%s",
+            "Iniciando camada DW via dbt. profiles_dir=%s, select=%s, clientes=%s, load_mode=%s",
             profiles_dir,
             " ".join(DBT_SELECT_MODELS),
             payload["id_clientes"],
+            payload["load_mode"],
         )
         logger.info("Resultados recebidos da camada DS: %s", materialized_ds_results)
+
+        resolved_window_starts = sorted(
+            str(result["window_start"])
+            for result in materialized_ds_results
+            if isinstance(result, dict) and result.get("window_start")
+        )
+        resolved_window_ends = sorted(
+            str(result["window_end"])
+            for result in materialized_ds_results
+            if isinstance(result, dict) and result.get("window_end")
+        )
+        audit_dt_inicio = resolved_window_starts[0] if resolved_window_starts else datetime.now().isoformat()
+        audit_dt_fim = resolved_window_ends[-1] if resolved_window_ends else datetime.now().isoformat()
 
         audit_repository.insert_batch_start(
             batch_id=dw_batch_id,
@@ -237,7 +252,8 @@ def load_sx_estado_d_dag():
                 rows_processed=rows_affected_total,
                 details=(
                     f"dbt build concluido com sucesso. models={DBT_SELECT_MODELS}, "
-                    f"id_clientes={payload['id_clientes']}, upstream_batch_ids={upstream_batch_ids}, "
+                    f"id_clientes={payload['id_clientes']}, load_mode={payload['load_mode']}, "
+                    f"upstream_batch_ids={upstream_batch_ids}, "
                     f"model_count={run_results.get('model_count', 0)}, "
                     f"test_count={run_results.get('test_count', 0)}."
                 ),

@@ -1,6 +1,6 @@
 import argparse
 from contextlib import closing
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
 import uuid
@@ -11,6 +11,7 @@ import pandas as pd
 import snowflake.connector
 
 from src.audit.audit_repository import AuditRepository
+from src.audit.watermark_repository import WatermarkRepository
 from src.common.config import Settings
 from src.common.logger import get_logger
 from src.common.snowflake_auth import build_snowflake_connection_kwargs, validate_snowflake_auth_settings
@@ -23,62 +24,46 @@ BRAZIL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 # ============================================================================
 # CONFIGURACAO DA PIPELINE
 #
-# ESTE ARQUIVO FOI ORGANIZADO PARA SER USADO COMO MODELO.
-# Ao copiar esta pipeline para outra tabela, normalmente voce so precisa trocar:
+# ESTE ARQUIVO IMPLEMENTA A CARGA DA ENTIDADE SX_ESTADO_D NO NOVO PADRAO
+# INCREMENTAL.
 #
-# 1. PIPELINE_NAME
-#    Nome do arquivo/processo. Exemplo: "load_sx_cidade_d"
+# O QUE ESTA PIPELINE FAZ:
+# 1. recebe o id_cliente
+# 2. decide o modo de carga:
+#    - INCREMENTAL_WATERMARK: quando nao ha data manual
+#    - MANUAL_BACKFILL: quando data_inicio e data_fim sao informadas
+# 3. busca o NAME_OWNER do cliente no Snowflake
+# 4. le no Snowflake o ultimo watermark processado para o cliente
+# 5. consulta no Oracle apenas os registros alterados no periodo efetivo
+# 6. adiciona ETL_BATCH_ID, BI_CREATED_AT e BI_UPDATED_AT
+#    - BI_CREATED_AT: primeira entrada no BI
+#    - BI_UPDATED_AT: ultima atualizacao no BI
+# 7. gera CSV temporario
+# 8. envia o arquivo para o stage do Snowflake
+# 9. aplica MERGE no DS pela chave natural
+# 10. atualiza o watermark somente em caso de sucesso
+# 11. registra auditoria de batch e eventos
 #
-# 2. OUTPUT_FOLDER_NAME
-#    Nome da pasta temporaria dentro de Documents onde o CSV sera gerado
-#    antes do PUT para o Snowflake. Exemplo: "sx_cidade_d"
+# DIFERENCA PARA O MODELO ANTIGO:
+# - antes a carga dependia sempre de data_inicio e data_fim informadas manualmente
+# - antes o DS fazia DELETE por cliente e depois COPY completo
+# - agora o modo padrao e incremental por UPDATED_ON da origem
+# - agora o DS faz MERGE incremental, preservando registros que nao mudaram
+# - agora o DS preserva BI_CREATED_AT e atualiza BI_UPDATED_AT a cada merge
 #
-# 3. TARGET_TABLE
-#    Tabela destino no Snowflake. Exemplo: "SOLIX_BI.DS.SX_CIDADE_D"
+# QUANDO USAR CADA MODO:
+# - INCREMENTAL_WATERMARK:
+#   uso normal do dia a dia
+# - MANUAL_BACKFILL:
+#   reprocessamento historico, contingencia ou correcao de dados
 #
-# 4. SOURCE_NAME
-#    Nome amigavel da origem para auditoria. Exemplo: "ORACLE.SX_ESTADO"
-#
-# 5. TARGET_COLUMNS
-#    Lista EXATA das colunas que serao carregadas no Snowflake, na ordem correta.
-#    Esta lista precisa bater com:
-#    - as colunas do DataFrame final
-#    - as colunas informadas no COPY INTO
-#    - a estrutura da tabela no Snowflake
-#
-#    Importante:
-#    - Se a tabela tiver ETL_BATCH_ID e ETL_LOADED_AT, mantenha essas colunas aqui.
-#    - Se houver outras colunas tecnicas obrigatorias, inclua aqui tambem.
-#    - Se o nome da coluna no Snowflake mudar, ajuste aqui.
-#
-# 6. ORACLE_EXTRACTION_QUERY
-#    Query Oracle da tabela que voce quer extrair.
-#    Regras desta query:
-#    - deve usar {name_owner} no FROM quando a tabela for segregada por cliente
-#    - deve retornar as colunas de negocio que entrarao no Snowflake
-#    - deve usar :id_cliente, :data_inicio e :data_fim quando necessario
-#
-# O QUE NORMALMENTE NAO PRECISA TROCAR:
-# - conexoes Oracle e Snowflake
-# - busca do NAME_OWNER no Snowflake
-# - auditoria basica de batch e eventos
-# - geracao de ETL_BATCH_ID
-# - geracao de ETL_LOADED_AT
-# - DELETE por ID_CLIENTE antes da carga
-# - PUT no stage
-# - COPY INTO
-#
-# FLUXO DESTA PIPELINE:
-# 1. Recebe id_cliente e periodo por argumento
-# 2. Busca NAME_OWNER no Snowflake
-# 3. Extrai dados do Oracle
-# 4. Monta colunas tecnicas de carga
-# 5. Gera CSV temporario
-# 6. Deleta dados antigos do cliente no DS
-# 7. Envia arquivo para o stage
-# 8. Executa COPY INTO
-# 9. Remove o arquivo local temporario
+# REGRAS IMPORTANTES:
+# - o watermark so avanca quando a carga termina com sucesso
+# - o backfill manual continua disponivel como excecao operacional
+# - a chave natural do DS para esta entidade e:
+#   ID_CLIENTE + CD_ESTADO
 # ============================================================================
+
 PIPELINE_NAME = "load_sx_estado_d"
 OUTPUT_FOLDER_NAME = "sx_estado_d"
 TARGET_TABLE = "SOLIX_BI.DS.SX_ESTADO_D"
@@ -88,30 +73,27 @@ TARGET_COLUMNS = [
     "CD_ESTADO",
     "DESC_ESTADO",
     "ETL_BATCH_ID",
-    "ETL_LOADED_AT",
+    "BI_CREATED_AT",
+    "BI_UPDATED_AT",
 ]
+NATURAL_KEY_COLUMNS = ["ID_CLIENTE", "CD_ESTADO"]
+SOURCE_UPDATED_AT_COLUMN = "SOURCE_UPDATED_ON"
+LOAD_MODE_INCREMENTAL = "INCREMENTAL_WATERMARK"
+LOAD_MODE_MANUAL = "MANUAL_BACKFILL"
+INITIAL_INCREMENTAL_START = datetime(1900, 1, 1, 0, 0, 0)
+INCREMENTAL_LOOKBACK_MINUTES = 10
 
-# QUERY DE EXTRACAO ORACLE
-# Ajuste esta query ao copiar a pipeline para outra entidade.
-# As colunas retornadas aqui devem ser compativeis com TARGET_COLUMNS
-# depois que as colunas tecnicas forem adicionadas em prepare_dataframe_for_load().
 ORACLE_EXTRACTION_QUERY = """
 SELECT
     :id_cliente AS ID_CLIENTE,
     e.CD_ESTADO,
-    e.DESC_ESTADO
+    e.DESC_ESTADO,
+    CAST(e.UPDATED_ON AS TIMESTAMP) AS SOURCE_UPDATED_ON
 FROM {name_owner}.cdt_estado e
-WHERE e.UPDATED_ON BETWEEN
-      TO_DATE(:data_inicio, 'DD/MM/YYYY HH24:MI:SS')
-  AND TO_DATE(:data_fim, 'DD/MM/YYYY HH24:MI:SS')
+WHERE e.UPDATED_ON >= TO_TIMESTAMP(:updated_on_start, 'DD/MM/YYYY HH24:MI:SS')
+  AND e.UPDATED_ON < TO_TIMESTAMP(:updated_on_end, 'DD/MM/YYYY HH24:MI:SS')
 """
 
-# ============================================================================
-# INFRAESTRUTURA COMPARTILHADA
-# A partir daqui, normalmente nao precisa alterar ao criar outra pipeline.
-# Esta parte concentra conexoes, validacoes, carga no Snowflake
-# e utilitarios compartilhados do fluxo.
-# ============================================================================
 CLIENT_LOOKUP_QUERY = """
 SELECT NAME_OWNER
 FROM SOLIX_BI.DS.SX_CLIENTE_D
@@ -152,7 +134,7 @@ def validate_required_settings() -> None:
     validate_snowflake_auth_settings()
 
 
-def parse_date(date_text: str) -> datetime.date:
+def parse_date(date_text: str) -> date:
     try:
         return datetime.strptime(date_text, "%Y-%m-%d").date()
     except ValueError as exc:
@@ -265,21 +247,21 @@ def validate_name_owner(name_owner: str) -> str:
 def extract_data_from_oracle(
     id_cliente: int,
     name_owner: str,
-    data_inicio: str,
-    data_fim: str,
+    updated_on_start: str,
+    updated_on_end: str,
 ) -> pd.DataFrame:
     validated_name_owner = validate_name_owner(name_owner)
     logger.info(
         "Iniciando extracao no Oracle para NAME_OWNER=%s entre %s e %s.",
         validated_name_owner,
-        data_inicio,
-        data_fim,
+        updated_on_start,
+        updated_on_end,
     )
 
     params = {
         "id_cliente": id_cliente,
-        "data_inicio": data_inicio,
-        "data_fim": data_fim,
+        "updated_on_start": updated_on_start,
+        "updated_on_end": updated_on_end,
     }
 
     query = ORACLE_EXTRACTION_QUERY.format(name_owner=validated_name_owner)
@@ -294,11 +276,12 @@ def extract_data_from_oracle(
 def prepare_dataframe_for_load(
     dataframe: pd.DataFrame,
     etl_batch_id: str,
-    etl_loaded_at: str,
+    bi_timestamp: str,
 ) -> pd.DataFrame:
     prepared = dataframe.copy()
     prepared["ETL_BATCH_ID"] = etl_batch_id
-    prepared["ETL_LOADED_AT"] = etl_loaded_at
+    prepared["BI_CREATED_AT"] = bi_timestamp
+    prepared["BI_UPDATED_AT"] = bi_timestamp
     prepared = prepared[TARGET_COLUMNS]
     return prepared
 
@@ -325,42 +308,104 @@ def save_dataframe_to_csv(dataframe: pd.DataFrame, output_file_path: Path) -> Pa
     return output_file_path
 
 
-def load_data_to_snowflake(output_file_path: Path, id_cliente: int) -> None:
+def load_data_to_snowflake(output_file_path: Path) -> None:
     logger.info("Enviando arquivo para o stage %s.", Settings.SNOWFLAKE_STAGE)
 
     loader = SnowflakeLoader()
     try:
-        logger.info("Removendo dados existentes no Snowflake para ID_CLIENTE=%s.", id_cliente)
-        loader.delete_by_id_cliente(
-            full_table_name=TARGET_TABLE,
-            id_cliente=id_cliente,
-        )
         loader.upload_file_to_stage(
             local_file_path=str(output_file_path),
             stage_name=Settings.SNOWFLAKE_STAGE,
         )
-        logger.info("Executando COPY INTO na tabela %s.", TARGET_TABLE)
-        loader.copy_into_table(
+        logger.info("Executando MERGE incremental na tabela %s.", TARGET_TABLE)
+        loader.merge_file_into_table(
             full_table_name=TARGET_TABLE,
             stage_name=Settings.SNOWFLAKE_STAGE,
             file_name=output_file_path.name,
             file_format_name=Settings.SNOWFLAKE_FILE_FORMAT,
             columns=TARGET_COLUMNS,
+            key_columns=NATURAL_KEY_COLUMNS,
+            preserve_on_update_columns=["BI_CREATED_AT"],
+            update_current_timestamp_columns=["BI_UPDATED_AT"],
         )
     finally:
         loader.close()
 
 
-def get_audit_repository() -> tuple[SnowflakeLoader, AuditRepository]:
+def get_audit_repository() -> tuple[SnowflakeLoader, AuditRepository, WatermarkRepository]:
     loader = SnowflakeLoader()
-    repository = AuditRepository(loader)
-    return loader, repository
+    audit_repository = AuditRepository(loader)
+    watermark_repository = WatermarkRepository(loader)
+    return loader, audit_repository, watermark_repository
 
 
 def remove_local_file(output_file_path: Path) -> None:
     if output_file_path.exists():
         output_file_path.unlink()
         logger.info("Arquivo local temporario removido: %s.", output_file_path)
+
+
+def format_oracle_timestamp(value: datetime) -> str:
+    return value.strftime("%d/%m/%Y %H:%M:%S")
+
+
+def normalize_source_updated_on(dataframe: pd.DataFrame) -> datetime | None:
+    if dataframe.empty or SOURCE_UPDATED_AT_COLUMN not in dataframe.columns:
+        return None
+
+    parsed = pd.to_datetime(dataframe[SOURCE_UPDATED_AT_COLUMN], errors="coerce")
+    max_timestamp = parsed.max()
+    if pd.isna(max_timestamp):
+        return None
+
+    return max_timestamp.to_pydatetime().replace(tzinfo=None)
+
+
+def resolve_load_window(
+    *,
+    id_cliente: int,
+    watermark_repository: WatermarkRepository,
+    data_inicio_text: str | None,
+    data_fim_text: str | None,
+) -> dict[str, object]:
+    manual_range_informed = bool(data_inicio_text or data_fim_text)
+    if manual_range_informed and not (data_inicio_text and data_fim_text):
+        raise ValueError("Informe data_inicio e data_fim juntos para executar backfill manual.")
+
+    if data_inicio_text and data_fim_text:
+        data_inicio = parse_date(data_inicio_text)
+        data_fim = parse_date(data_fim_text)
+        if data_inicio > data_fim:
+            raise ValueError("data_inicio nao pode ser maior que data_fim.")
+
+        extraction_started_at = datetime.combine(data_inicio, datetime.min.time())
+        extraction_ended_at = datetime.combine(data_fim + timedelta(days=1), datetime.min.time())
+        return {
+            "load_mode": LOAD_MODE_MANUAL,
+            "manual_data_inicio": data_inicio.isoformat(),
+            "manual_data_fim": data_fim.isoformat(),
+            "extraction_started_at": extraction_started_at,
+            "extraction_ended_at": extraction_ended_at,
+            "last_watermark": None,
+        }
+
+    last_watermark = watermark_repository.get_last_source_updated_at(
+        pipeline_name=PIPELINE_NAME,
+        id_cliente=id_cliente,
+    )
+    extraction_ended_at = datetime.now(BRAZIL_TIMEZONE).replace(tzinfo=None)
+    extraction_started_at = INITIAL_INCREMENTAL_START
+    if last_watermark:
+        extraction_started_at = last_watermark - timedelta(minutes=INCREMENTAL_LOOKBACK_MINUTES)
+
+    return {
+        "load_mode": LOAD_MODE_INCREMENTAL,
+        "manual_data_inicio": None,
+        "manual_data_fim": None,
+        "extraction_started_at": extraction_started_at,
+        "extraction_ended_at": extraction_ended_at,
+        "last_watermark": last_watermark,
+    }
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -376,41 +421,66 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data_inicio",
         type=str,
-        required=True,
-        help="Data inicial no formato YYYY-MM-DD.",
+        required=False,
+        help="Data inicial no formato YYYY-MM-DD. Opcional para backfill manual.",
     )
     parser.add_argument(
         "--data_fim",
         type=str,
-        required=True,
-        help="Data final no formato YYYY-MM-DD.",
+        required=False,
+        help="Data final no formato YYYY-MM-DD. Opcional para backfill manual.",
     )
     return parser
 
 
-def run_pipeline(id_cliente: int, data_inicio_text: str, data_fim_text: str) -> dict[str, str | int]:
+def run_pipeline(
+    id_cliente: int,
+    data_inicio_text: str | None = None,
+    data_fim_text: str | None = None,
+) -> dict[str, str | int | None]:
     output_file_path: Path | None = None
     batch_id: str | None = None
     audit_loader: SnowflakeLoader | None = None
     audit_repository: AuditRepository | None = None
+    watermark_repository: WatermarkRepository | None = None
+    audit_dt_inicio = datetime.now(BRAZIL_TIMEZONE).isoformat()
+    audit_dt_fim = audit_dt_inicio
+    resolved_load_mode = LOAD_MODE_INCREMENTAL
 
     try:
         validate_required_settings()
 
-        data_inicio = parse_date(data_inicio_text)
-        data_fim = parse_date(data_fim_text)
-        if data_inicio > data_fim:
-            raise ValueError("data_inicio nao pode ser maior que data_fim.")
-
         batch_id = uuid.uuid4().hex
         etl_batch_id = batch_id
-        etl_loaded_at = datetime.now(BRAZIL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+        bi_timestamp = datetime.now(BRAZIL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
         logger.info("BATCH_ID gerado para a carga: %s.", batch_id)
-        logger.info("ETL_LOADED_AT gerado para a carga: %s.", etl_loaded_at)
+        logger.info("BI timestamps gerados para a carga: %s.", bi_timestamp)
 
-        audit_dt_inicio = data_inicio.isoformat()
-        audit_dt_fim = data_fim.isoformat()
-        audit_loader, audit_repository = get_audit_repository()
+        audit_loader, audit_repository, watermark_repository = get_audit_repository()
+        load_window = resolve_load_window(
+            id_cliente=id_cliente,
+            watermark_repository=watermark_repository,
+            data_inicio_text=data_inicio_text,
+            data_fim_text=data_fim_text,
+        )
+
+        resolved_load_mode = str(load_window["load_mode"])
+        extraction_started_at = load_window["extraction_started_at"]
+        extraction_ended_at = load_window["extraction_ended_at"]
+        audit_dt_inicio = extraction_started_at.isoformat()
+        audit_dt_fim = extraction_ended_at.isoformat()
+        extraction_start = format_oracle_timestamp(extraction_started_at)
+        extraction_end = format_oracle_timestamp(extraction_ended_at)
+
+        logger.info(
+            "Modo de carga resolvido para id_cliente=%s: %s. Janela efetiva: %s -> %s. Ultimo watermark=%s",
+            id_cliente,
+            resolved_load_mode,
+            extraction_start,
+            extraction_end,
+            load_window["last_watermark"],
+        )
+
         audit_repository.insert_batch_start(
             batch_id=batch_id,
             pipeline_name=PIPELINE_NAME,
@@ -422,14 +492,14 @@ def run_pipeline(id_cliente: int, data_inicio_text: str, data_fim_text: str) -> 
         )
 
         name_owner = get_name_owner(id_cliente)
-        extraction_start = data_inicio.strftime("%d/%m/%Y 00:00:00")
-        extraction_end = data_fim.strftime("%d/%m/%Y 23:59:59")
         dataframe = extract_data_from_oracle(
             id_cliente=id_cliente,
             name_owner=name_owner,
-            data_inicio=extraction_start,
-            data_fim=extraction_end,
+            updated_on_start=extraction_start,
+            updated_on_end=extraction_end,
         )
+        max_source_updated_on = normalize_source_updated_on(dataframe)
+
         audit_repository.insert_audit_event(
             batch_id=batch_id,
             step_name="ORACLE_EXTRACT",
@@ -439,42 +509,79 @@ def run_pipeline(id_cliente: int, data_inicio_text: str, data_fim_text: str) -> 
             rows_processed=len(dataframe),
             details=(
                 f"Extracao concluida para id_cliente={id_cliente}, "
-                f"name_owner={name_owner}, periodo={extraction_start} a {extraction_end}."
+                f"name_owner={name_owner}, load_mode={resolved_load_mode}, "
+                f"janela={extraction_start} a {extraction_end}, "
+                f"max_source_updated_on={max_source_updated_on}."
             ),
             id_cliente=id_cliente,
             dt_inicio=audit_dt_inicio,
             dt_fim=audit_dt_fim,
         )
-        dataframe = prepare_dataframe_for_load(
-            dataframe=dataframe,
-            etl_batch_id=etl_batch_id,
-            etl_loaded_at=etl_loaded_at,
-        )
-        output_file_path = build_output_file_path(
-            id_cliente=id_cliente,
-            data_inicio=extraction_start,
-            data_fim=extraction_end,
-        )
-        save_dataframe_to_csv(dataframe, output_file_path)
-        load_data_to_snowflake(output_file_path, id_cliente)
+
+        rows_loaded = 0
+        if not dataframe.empty:
+            dataframe_to_load = prepare_dataframe_for_load(
+                dataframe=dataframe,
+                etl_batch_id=etl_batch_id,
+                bi_timestamp=bi_timestamp,
+            )
+            output_file_path = build_output_file_path(
+                id_cliente=id_cliente,
+                data_inicio=extraction_start,
+                data_fim=extraction_end,
+            )
+            save_dataframe_to_csv(dataframe_to_load, output_file_path)
+            load_data_to_snowflake(output_file_path)
+            rows_loaded = len(dataframe_to_load)
+            logger.info(
+                "Carga incremental concluida para id_cliente=%s. Linhas aplicadas no DS=%s.",
+                id_cliente,
+                rows_loaded,
+            )
+        else:
+            logger.info(
+                "Nenhuma alteracao encontrada para id_cliente=%s na janela %s -> %s.",
+                id_cliente,
+                extraction_start,
+                extraction_end,
+            )
+
         audit_repository.insert_audit_event(
             batch_id=batch_id,
-            step_name="SNOWFLAKE_LOAD",
+            step_name="SNOWFLAKE_MERGE",
             source_name=SOURCE_NAME,
             target_name=TARGET_TABLE,
             status="SUCCESS",
-            rows_processed=len(dataframe),
+            rows_processed=rows_loaded,
             details=(
-                f"Carga concluida na tabela {TARGET_TABLE} para id_cliente={id_cliente}."
+                f"Merge incremental concluido na tabela {TARGET_TABLE} "
+                f"para id_cliente={id_cliente}. load_mode={resolved_load_mode}."
             ),
             id_cliente=id_cliente,
             dt_inicio=audit_dt_inicio,
             dt_fim=audit_dt_fim,
         )
+
+        if max_source_updated_on is not None:
+            watermark_repository.upsert_success_watermark(
+                pipeline_name=PIPELINE_NAME,
+                id_cliente=id_cliente,
+                last_source_updated_at=max_source_updated_on,
+                batch_id=batch_id,
+                load_mode=resolved_load_mode,
+                extraction_started_at=extraction_started_at,
+                extraction_ended_at=extraction_ended_at,
+            )
+            logger.info(
+                "Watermark atualizado para id_cliente=%s com SOURCE_UPDATED_ON=%s.",
+                id_cliente,
+                max_source_updated_on,
+            )
+
         audit_repository.update_batch_success(
             batch_id=batch_id,
             rows_extracted=len(dataframe),
-            rows_loaded=len(dataframe),
+            rows_loaded=rows_loaded,
         )
 
         logger.info(
@@ -482,13 +589,16 @@ def run_pipeline(id_cliente: int, data_inicio_text: str, data_fim_text: str) -> 
             id_cliente,
             len(dataframe),
         )
-        logger.info("Preview dos dados carregados: %s", dataframe.head().to_dict(orient="records"))
         return {
             "batch_id": batch_id,
             "id_cliente": id_cliente,
             "rows_extracted": len(dataframe),
-            "rows_loaded": len(dataframe),
+            "rows_loaded": rows_loaded,
             "target_table": TARGET_TABLE,
+            "load_mode": resolved_load_mode,
+            "window_start": audit_dt_inicio,
+            "window_end": audit_dt_fim,
+            "max_source_updated_on": max_source_updated_on.isoformat() if max_source_updated_on else None,
         }
 
     except Exception as exc:
@@ -501,10 +611,10 @@ def run_pipeline(id_cliente: int, data_inicio_text: str, data_fim_text: str) -> 
                     target_name=TARGET_TABLE,
                     status="ERROR",
                     rows_processed=0,
-                    details=str(exc),
+                    details=f"load_mode={resolved_load_mode}. erro={exc}",
                     id_cliente=id_cliente,
-                    dt_inicio=data_inicio.isoformat(),
-                    dt_fim=data_fim.isoformat(),
+                    dt_inicio=audit_dt_inicio,
+                    dt_fim=audit_dt_fim,
                 )
                 audit_repository.update_batch_error(batch_id=batch_id, error_message=str(exc))
             except Exception as audit_exc:

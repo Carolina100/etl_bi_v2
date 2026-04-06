@@ -42,6 +42,12 @@ etl_bi/
 ### DS
 
 ```powershell
+python src/pipelines/load_sx_estado_d.py --id_cliente 7
+```
+
+Backfill manual por janela:
+
+```powershell
 python src/pipelines/load_sx_estado_d.py --id_cliente 7 --data_inicio 2018-01-01 --data_fim 2026-03-31
 ```
 
@@ -59,6 +65,13 @@ dbt build --select stg_ds__sx_estado_d dim_sx_estado_d
 - subir a stack local com `docker compose -f docker-compose.local.yml up --build`
 - acessar Airflow em `http://localhost:8080`
 - disparar a DAG `load_sx_estado_d_dag`
+
+### Estratégia incremental
+
+- padrão: `INCREMENTAL_WATERMARK`
+- exceção operacional: `MANUAL_BACKFILL`
+- documentação detalhada:
+  - `docs/INCREMENTAL_LOADING.md`
 
 ### Filas e workers
 
@@ -106,3 +119,12 @@ O projeto ja esta preparado para:
 - politica de retencao de auditoria
 - CI/CD para imagem do Airflow
 - separacao de ambientes dev/hml/prd
+
+## Ajustes de schema do DS
+
+Para `SX_ESTADO_D`, o padrão técnico atual no BI considera:
+
+- `BI_CREATED_AT`
+- `BI_UPDATED_AT`
+
+A coluna `ETL_LOADED_AT` deixou de ser usada nesse fluxo.

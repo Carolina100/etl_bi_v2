@@ -25,7 +25,8 @@ with source_data as (
         CD_ESTADO,
         DESC_ESTADO,
         ETL_BATCH_ID,
-        ETL_LOADED_AT
+        BI_CREATED_AT,
+        BI_UPDATED_AT
     from {{ source('ds', SOURCE_TABLE_NAME) }}
 ),
 
@@ -35,7 +36,8 @@ typed_data as (
         cast(CD_ESTADO as varchar) as CD_ESTADO,
         cast(DESC_ESTADO as varchar) as DESC_ESTADO,
         cast(ETL_BATCH_ID as varchar) as ETL_BATCH_ID,
-        cast(ETL_LOADED_AT as timestamp_ntz) as ETL_LOADED_AT
+        cast(BI_CREATED_AT as timestamp_ntz) as BI_CREATED_AT,
+        cast(BI_UPDATED_AT as timestamp_ntz) as BI_UPDATED_AT
     from source_data
 ),
 
@@ -45,7 +47,7 @@ deduplicated as (
     from typed_data
     qualify row_number() over (
         partition by ID_CLIENTE, CD_ESTADO
-        order by ETL_LOADED_AT desc, ETL_BATCH_ID desc
+        order by BI_UPDATED_AT desc, ETL_BATCH_ID desc
     ) = 1
 )
 
@@ -54,5 +56,6 @@ select
     CD_ESTADO,
     DESC_ESTADO,
     ETL_BATCH_ID,
-    ETL_LOADED_AT
+    BI_CREATED_AT,
+    BI_UPDATED_AT
 from deduplicated
