@@ -59,6 +59,13 @@ with staged_source as (
         BI_CREATED_AT,
         BI_UPDATED_AT
     from {{ ref(STAGING_MODEL_NAME) }}
+    {% if is_incremental() %}
+    where BI_UPDATED_AT > (
+        select coalesce(max(BI_UPDATED_AT), '1900-01-01'::timestamp_ntz)
+        from {{ this }}
+        where {{ SURROGATE_KEY_COLUMN }} <> -1
+    )
+    {% endif %}
 ),
 
 existing_dimension as (
@@ -82,7 +89,7 @@ business_rows as (
         coalesce(existing_dimension.SK_ESTADO, {{ SEQUENCE_NAME }}.nextval) as SK_ESTADO,
         staged_source.ID_CLIENTE,
         staged_source.CD_ESTADO,
-        staged_source.DESC_ESTADO,
+        upper(staged_source.DESC_ESTADO) as DESC_ESTADO,
         staged_source.ETL_BATCH_ID,
         staged_source.BI_CREATED_AT,
         staged_source.BI_UPDATED_AT
@@ -104,9 +111,13 @@ orphan_row as (
 ),    
 
 final as (
+    {% if is_incremental() %}
+    select * from business_rows
+    {% else %}
     select * from orphan_row
     union all
     select * from business_rows
+    {% endif %}
 )
 
 select

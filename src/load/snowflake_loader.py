@@ -31,6 +31,9 @@ class SnowflakeLoader:
         with self.conn.cursor() as cur:
             cur.execute(sql)
 
+    def remove_file_from_stage(self, stage_name: str, file_name: str) -> None:
+        self.execute(f"REMOVE {stage_name}/{file_name}")
+
     def delete_by_id_cliente(self, full_table_name: str, id_cliente: int) -> None:
         self.execute(f"DELETE FROM {full_table_name} WHERE ID_CLIENTE = {id_cliente}")
 
@@ -115,3 +118,4 @@ class SnowflakeLoader:
                 VALUES ({insert_values})
             """
         )
+        self.remove_file_from_stage(stage_name=stage_name, file_name=file_name)

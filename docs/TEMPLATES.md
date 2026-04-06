@@ -1,112 +1,121 @@
-# Templates do Projeto
+# Replicação do Projeto
 
-Este arquivo resume o que copiar para criar uma nova tabela no fluxo completo `Oracle -> DS -> DW`.
+Este projeto passou a adotar um modelo simples:
 
-Observacao:
+- a entidade `SX_ESTADO_D` e a referencia funcional completa
+- novas entidades devem ser criadas copiando esse fluxo real
+- nao considere templates antigos como fonte principal
 
-- o padrao atual da camada DS e incremental por watermark com fallback de backfill manual
-- para novas tabelas, use `load_sx_estado_d.py` como referencia funcional mais completa, alem do template base
-- detalhes operacionais em [INCREMENTAL_LOADING.md](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/docs/INCREMENTAL_LOADING.md)
+## Arquivos de referência
+
+Para criar uma nova entidade no fluxo `Oracle -> DS -> DW`, use estes arquivos como base:
+
+1. Pipeline DS
+   - [load_sx_estado_d.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/src/pipelines/load_sx_estado_d.py)
+2. DAG Airflow
+   - [load_sx_estado_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_estado_d_dag.py)
+3. Staging dbt
+   - [stg_ds__sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/staging/ds/stg_ds__sx_estado_d.sql)
+4. Dimensão dbt
+   - [dim_sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/marts/dimensions/dim_sx_estado_d.sql)
+5. Regras incrementais
+   - [INCREMENTAL_LOADING.md](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/docs/INCREMENTAL_LOADING.md)
 
 ## Ordem recomendada
 
-1. Copiar a pipeline DS:
-   - [template pipeline DS](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/src/pipelines/_template_load_ds_pipeline.py)
-2. Copiar a DAG:
-   - [template DAG Airflow](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/_template_oracle_ds_to_dw_dag.py)
-3. Copiar o staging do dbt:
-   - [template staging dbt](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/staging/ds/_template_stg_ds__entity.sql)
-4. Copiar a dimensão do dbt:
-   - [template dimensão dbt](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/marts/dimensions/_template_dim_entity.sql)
+1. Criar a tabela DS no Snowflake
+2. Copiar a pipeline DS e ajustar as constantes
+3. Garantir a chave natural da entidade
+4. Garantir a coluna de atualização da origem
+5. Criar ou ajustar a DAG
+6. Criar source e staging no dbt
+7. Criar dimensão DW
+8. Criar sequence do DW, se necessário
+9. Testar primeiro a camada DS
+10. Testar depois o dbt e a DAG completa
 
-## O que trocar em cada camada
+## O que trocar na pipeline DS
 
-### 1. Pipeline DS
+Ao copiar [load_sx_estado_d.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/src/pipelines/load_sx_estado_d.py), troque:
 
-Troque:
 - `PIPELINE_NAME`
 - `OUTPUT_FOLDER_NAME`
 - `TARGET_TABLE`
 - `SOURCE_NAME`
 - `TARGET_COLUMNS`
+- `NATURAL_KEY_COLUMNS`
+- `SOURCE_UPDATED_AT_COLUMN`
 - `ORACLE_EXTRACTION_QUERY`
 
-### 2. DAG
+Mantenha o padrão atual:
 
-Troque:
+- carga incremental por watermark
+- backfill manual por `data_inicio` e `data_fim`
+- `MERGE` no DS
+- colunas técnicas `BI_CREATED_AT` e `BI_UPDATED_AT`
+
+## O que trocar na DAG
+
+Ao copiar [load_sx_estado_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_estado_d_dag.py), troque:
+
 - `DAG_ID`
 - `PIPELINE_DESCRIPTION`
 - `TAGS`
-- import da pipeline em `src.pipelines`
+- import da pipeline em `run_ds_pipeline_task`
 - `DBT_SELECT_MODELS`
 - `DW_PIPELINE_NAME`
 - `DW_SOURCE_NAME`
 - `DW_TARGET_NAME`
 
-### 3. Staging dbt
+Mantenha o padrão atual:
 
-Troque:
-- `SOURCE_TABLE_NAME`
-- `tags`
+- fila `ds` para a camada Python
+- fila `dbt` para a camada DW
+- execução incremental por padrão
+- backfill manual como exceção operacional
+
+## O que trocar no staging dbt
+
+Ao copiar [stg_ds__sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/staging/ds/stg_ds__sx_estado_d.sql), troque:
+
+- nome do source
 - colunas da tabela DS
 - casts
-- chave natural no `qualify row_number()`
+- chave natural no `row_number()`
 
-### 4. Dimensão dbt
+Mantenha o padrão atual:
 
-Troque:
-- `MODEL_ALIAS`
-- `STAGING_MODEL_NAME`
-- `SEQUENCE_NAME`
-- `SURROGATE_KEY_COLUMN`
-- `NATURAL_KEY_COLUMNS`
+- usar `BI_UPDATED_AT` para priorizar a linha mais recente
+- manter `ETL_BATCH_ID`
+- usar `dbt_utils.unique_combination_of_columns` quando a chave natural for composta
+
+## O que trocar na dimensão DW
+
+Ao copiar [dim_sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/marts/dimensions/dim_sx_estado_d.sql), troque:
+
+- alias da tabela
+- sequence
+- surrogate key
+- chave natural
 - campos de negócio
-- regra do órfão
+- regras do registro órfão
 
 ## Regras de ouro
 
-- No `DS`, a lista de colunas deve bater com a tabela Snowflake.
-- No `DW`, a chave natural usada no `merge` deve refletir a unicidade da dimensão.
-- O registro órfão deve continuar técnico e estável, normalmente com `-1`.
-- `ETL_LOADED_AT` deve ser gravado em horário de Brasília.
-- Em multi-cliente, a auditoria do `DW` pode usar `ID_CLIENTE = -1`.
+- use como base o caso real de `SX_ESTADO_D`, nao um template paralelo
+- mantenha `LAST_SOURCE_UPDATED_AT` fiel ao valor da origem
+- mantenha `UPDATED_AT` da tabela de watermark em horário de Brasília
+- atualize o watermark apenas em execução bem-sucedida
+- preserve `BI_CREATED_AT` e atualize `BI_UPDATED_AT` no `MERGE`
+- documente a chave natural da entidade antes de começar a implementação
 
-## Estratégia de agendamento e retries
+## Checklist rápido
 
-### Padrão recomendado para começar
-
-- `schedule=None`
-  Use execução manual enquanto a tabela ainda está sendo validada.
-- `max_active_runs=1`
-  Evita duas execuções da mesma DAG competindo entre si.
-- `max_active_tasks=4`
-  Limita o paralelismo total da DAG e ajuda a proteger Oracle e Snowflake.
-
-### Camada DS por cliente
-
-- `retries=3`
-- `retry_delay=5 minutos`
-- `retry_exponential_backoff=True`
-- `max_retry_delay=30 minutos`
-
-Motivo:
-- a task do `DS` costuma falhar por conexão, rede ou indisponibilidade temporária
-- como ela é mapeada por cliente, só o cliente com erro tenta novamente
-
-### Camada DW via dbt
-
-- `retries=1`
-- `retry_delay=5 minutos`
-
-Motivo:
-- o `DW` roda uma vez ao final
-- se falhar, normalmente uma nova tentativa já é suficiente
-- retries demais no `dbt` tendem a repetir o mesmo erro sem ganho
-
-### Quando evoluir
-
-Depois que a tabela estabilizar, o mais comum é:
-
-- trocar `schedule=None` por um agendamento diário
-- exemplo: `0 6 * * *`
-- avaliar `pool` do Airflow para limitar quantos clientes podem bater no Oracle ao mesmo tempo
+- a tabela DS existe no Snowflake
+- a role de ingestão tem permissão na tabela DS e na `CTL_PIPELINE_WATERMARK`
+- a coluna de atualização da origem foi validada
+- a sequence do DW existe
+- `dbt deps` foi executado após adicionar ou atualizar pacotes em [packages.yml](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/packages.yml)
+- source/staging/dimensão do dbt foram criados
+- a DAG foi ajustada para os nomes corretos
+- o fluxo DS rodou sozinho antes do teste completo no Airflow

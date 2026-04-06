@@ -55,6 +55,21 @@ Regra aplicada no `MERGE`:
   - preserva `BI_CREATED_AT`
   - atualiza `BI_UPDATED_AT`
 
+## Incremental no DW
+
+As dimensoes no dbt tambem passam a trabalhar de forma incremental:
+
+- na primeira execucao, o modelo materializa todo o conjunto e inclui o registro orfao
+- nas execucoes seguintes, o `staged_source` filtra apenas linhas com `BI_UPDATED_AT`
+  maior que o maximo ja existente no DW
+- o `merge` do dbt atualiza ou insere apenas o delta da camada DS
+
+Isso reduz:
+
+- volume processado no DW
+- tempo de execucao do `dbt`
+- quantidade de linhas afetadas na auditoria
+
 ## Tabela de controle necessária
 
 O controle incremental depende desta tabela no Snowflake:
@@ -75,7 +90,7 @@ create table if not exists SOLIX_BI.DS.CTL_PIPELINE_WATERMARK (
 
 Script no repositório:
 
-- [create_ctl_pipeline_watermark.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/src/sql/create_ctl_pipeline_watermark.sql)
+- [create_ctl_pipeline_watermark.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/sql/control/create_ctl_pipeline_watermark.sql)
 
 Se a tabela `SOLIX_BI.DS.SX_ESTADO_D` ja existir, ela precisa conter tambem:
 
@@ -117,6 +132,31 @@ O padrão novo de extração ficou assim:
 WHERE e.UPDATED_ON >= TO_TIMESTAMP(:updated_on_start, 'DD/MM/YYYY HH24:MI:SS')
   AND e.UPDATED_ON < TO_TIMESTAMP(:updated_on_end, 'DD/MM/YYYY HH24:MI:SS')
 ```
+
+## Padrão `base -> ranked -> select final`
+
+O projeto passa a adotar como padrão estrutural nas queries Oracle da camada DS:
+
+1. `base`
+   - monta o dataset bruto da entidade
+   - aplica joins, derivacoes e o `SOURCE_UPDATED_ON`
+2. `ranked`
+   - garante uma unica linha por chave natural
+   - usa `ROW_NUMBER()` com `PARTITION BY` na chave natural
+   - prioriza a linha mais recente por `SOURCE_UPDATED_ON DESC`
+3. `select final`
+   - aplica o filtro incremental da janela
+   - filtra `RN = 1`
+   - entrega apenas as colunas finais da carga
+
+Por que isso existe:
+
+- protege o `MERGE` no Snowflake contra duplicidade na origem
+- evita que joins futuros quebrem a unicidade da chave natural
+- padroniza a leitura das pipelines entre entidades simples e complexas
+- reduz o risco de comportamento inconsistente quando a origem mudar no futuro
+
+Mesmo em entidades simples, como `SX_ESTADO_D`, esse padrão pode ser mantido por consistencia arquitetural.
 
 ## Como usar
 
@@ -169,5 +209,8 @@ Isso permite que o DW registre a janela real processada, mesmo quando cada clien
 
 Observacao de timezone:
 
+- `LAST_SOURCE_UPDATED_AT` nao e convertido para horario de Brasilia
+- ele e persistido como valor fiel retornado pela origem Oracle
+- isso e importante porque esse campo dirige a logica incremental e precisa permanecer no mesmo referencial de tempo da origem
 - `UPDATED_AT` em `CTL_PIPELINE_WATERMARK` e gravado em horario de Brasilia
 - isso e feito no Snowflake com `CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ`

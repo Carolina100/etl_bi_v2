@@ -14,6 +14,7 @@ etl_bi/
   dbt/solix_dbt/
   docs/
   infra/airflow/
+  sql/
   scripts/
   src/
 ```
@@ -25,6 +26,15 @@ etl_bi/
 - `dbt/solix_dbt/models/staging/`: staging a partir do DS
 - `dbt/solix_dbt/models/marts/dimensions/`: dimensoes DW
 - `src/audit/`: auditoria DS e DW
+- `sql/control/`: scripts SQL de tabelas de controle
+- `sql/ds/`: scripts SQL da camada DS por entidade
+- `sql/dw/`: scripts SQL da camada DW por entidade
+
+Modelo de referência para novas entidades:
+
+- use o fluxo completo de `SX_ESTADO_D` como base funcional
+- guia de replicação:
+  - `docs/TEMPLATES.md`
 
 ## Arquitetura de execução
 

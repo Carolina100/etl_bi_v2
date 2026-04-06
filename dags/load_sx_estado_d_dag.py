@@ -241,7 +241,13 @@ def load_sx_estado_d_dag():
 
             run_results = result.get("run_results", {})
             model_results = run_results.get("model_results", [])
+            rows_inserted_total = int(run_results.get("rows_inserted_total") or 0)
+            rows_updated_total = int(run_results.get("rows_updated_total") or 0)
+            rows_deleted_total = int(run_results.get("rows_deleted_total") or 0)
             rows_affected_total = int(run_results.get("rows_affected_total") or 0)
+            rows_loaded_total = rows_inserted_total + rows_updated_total
+            if rows_loaded_total == 0 and rows_affected_total > 0:
+                rows_loaded_total = rows_affected_total
 
             audit_repository.insert_audit_event(
                 batch_id=dw_batch_id,
@@ -249,11 +255,15 @@ def load_sx_estado_d_dag():
                 source_name=DW_SOURCE_NAME,
                 target_name=DW_TARGET_NAME,
                 status="SUCCESS",
-                rows_processed=rows_affected_total,
+                rows_processed=rows_loaded_total,
                 details=(
                     f"dbt build concluido com sucesso. models={DBT_SELECT_MODELS}, "
                     f"id_clientes={payload['id_clientes']}, load_mode={payload['load_mode']}, "
                     f"upstream_batch_ids={upstream_batch_ids}, "
+                    f"rows_inserted_total={rows_inserted_total}, "
+                    f"rows_updated_total={rows_updated_total}, "
+                    f"rows_deleted_total={rows_deleted_total}, "
+                    f"rows_affected_total={rows_affected_total}, "
                     f"model_count={run_results.get('model_count', 0)}, "
                     f"test_count={run_results.get('test_count', 0)}."
                 ),
@@ -285,7 +295,7 @@ def load_sx_estado_d_dag():
             audit_repository.update_batch_success(
                 batch_id=dw_batch_id,
                 rows_extracted=upstream_rows_loaded,
-                rows_loaded=rows_affected_total,
+                rows_loaded=rows_loaded_total,
             )
 
             result.update(

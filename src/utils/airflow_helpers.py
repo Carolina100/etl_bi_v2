@@ -150,5 +150,8 @@ def load_dbt_run_results(run_results_path: Path) -> dict[str, Any]:
         "test_results": test_results,
         "model_count": len(model_results),
         "test_count": len(test_results),
+        "rows_inserted_total": sum(result["rows_inserted"] for result in model_results),
+        "rows_updated_total": sum(result["rows_updated"] for result in model_results),
+        "rows_deleted_total": sum(result["rows_deleted"] for result in model_results),
         "rows_affected_total": sum(result["rows_affected"] for result in model_results),
     }

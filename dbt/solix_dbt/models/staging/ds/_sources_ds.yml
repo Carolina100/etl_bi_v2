@@ -8,4 +8,8 @@ sources:
     tables:
       - name: sx_estado_d
         identifier: SX_ESTADO_D
-        description: "Tabela de estados carregada no DS pela pipeline Python."
+        description: "Tabela DS da entidade SX_ESTADO_D."
+      - name: sx_operacao_d
+        identifier: SX_OPERACAO_D
+        description: "Tabela DS da entidade SX_OPERACAO_D."
+

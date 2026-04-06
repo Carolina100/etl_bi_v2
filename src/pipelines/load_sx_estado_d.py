@@ -84,14 +84,32 @@ INITIAL_INCREMENTAL_START = datetime(1900, 1, 1, 0, 0, 0)
 INCREMENTAL_LOOKBACK_MINUTES = 10
 
 ORACLE_EXTRACTION_QUERY = """
+WITH base AS (
+    SELECT
+        :id_cliente AS ID_CLIENTE,
+        e.CD_ESTADO,
+        e.DESC_ESTADO,
+        CAST(e.UPDATED_ON AS TIMESTAMP) AS SOURCE_UPDATED_ON
+    FROM {name_owner}.cdt_estado e
+),
+ranked AS (
+    SELECT
+        base.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY ID_CLIENTE, CD_ESTADO
+            ORDER BY SOURCE_UPDATED_ON DESC
+        ) AS RN
+    FROM base
+)
 SELECT
-    :id_cliente AS ID_CLIENTE,
-    e.CD_ESTADO,
-    e.DESC_ESTADO,
-    CAST(e.UPDATED_ON AS TIMESTAMP) AS SOURCE_UPDATED_ON
-FROM {name_owner}.cdt_estado e
-WHERE e.UPDATED_ON >= TO_TIMESTAMP(:updated_on_start, 'DD/MM/YYYY HH24:MI:SS')
-  AND e.UPDATED_ON < TO_TIMESTAMP(:updated_on_end, 'DD/MM/YYYY HH24:MI:SS')
+    ID_CLIENTE,
+    CD_ESTADO,
+    DESC_ESTADO,
+    SOURCE_UPDATED_ON
+FROM ranked
+WHERE RN = 1
+  AND SOURCE_UPDATED_ON >= TO_TIMESTAMP(:updated_on_start, 'DD/MM/YYYY HH24:MI:SS')
+  AND SOURCE_UPDATED_ON < TO_TIMESTAMP(:updated_on_end, 'DD/MM/YYYY HH24:MI:SS')
 """
 
 CLIENT_LOOKUP_QUERY = """

@@ -3,6 +3,11 @@ version: 2
 models:
   - name: stg_ds__sx_estado_d
     description: "Modelo staging da tabela DS SX_ESTADO_D."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - ID_CLIENTE
+            - CD_ESTADO
     columns:
       - name: ID_CLIENTE
         tests:
@@ -11,5 +16,12 @@ models:
         tests:
           - not_null
       - name: DESC_ESTADO
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
         tests:
           - not_null

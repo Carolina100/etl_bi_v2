@@ -1,6 +1,8 @@
 from src.load.snowflake_loader import SnowflakeLoader
 
 class AuditRepository:
+    BRAZIL_NOW_SQL = "CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+
     def __init__(self, loader: SnowflakeLoader) -> None:
         self.loader = loader
 
@@ -20,7 +22,7 @@ class AuditRepository:
             ID_CLIENTE, DT_INICIO, DT_FIM
         )
         VALUES (
-            '{batch_id}', '{pipeline_name}', '{source_name}', '{target_name}', 'RUNNING', CURRENT_TIMESTAMP(),
+            '{batch_id}', '{pipeline_name}', '{source_name}', '{target_name}', 'RUNNING', {self.BRAZIL_NOW_SQL},
             {id_cliente}, '{dt_inicio}', '{dt_fim}'
         )
         """
@@ -30,7 +32,7 @@ class AuditRepository:
         sql = f"""
         UPDATE SOLIX_BI.DS.CTL_BATCH_EXECUTION
         SET STATUS = 'SUCCESS',
-            ENDED_AT = CURRENT_TIMESTAMP(),
+            ENDED_AT = {self.BRAZIL_NOW_SQL},
             ROWS_EXTRACTED = {rows_extracted},
             ROWS_LOADED = {rows_loaded},
             ERROR_MESSAGE = NULL
@@ -43,7 +45,7 @@ class AuditRepository:
         sql = f"""
         UPDATE SOLIX_BI.DS.CTL_BATCH_EXECUTION
         SET STATUS = 'ERROR',
-            ENDED_AT = CURRENT_TIMESTAMP(),
+            ENDED_AT = {self.BRAZIL_NOW_SQL},
             ERROR_MESSAGE = '{msg}'
         WHERE BATCH_ID = '{batch_id}'
         """
@@ -69,7 +71,7 @@ class AuditRepository:
             ID_CLIENTE, DT_INICIO, DT_FIM
         )
         VALUES (
-            '{batch_id}', '{step_name}', '{source_name}', '{target_name}', '{status}', {rows_processed}, CURRENT_TIMESTAMP(), '{det}',
+            '{batch_id}', '{step_name}', '{source_name}', '{target_name}', '{status}', {rows_processed}, {self.BRAZIL_NOW_SQL}, '{det}',
             {id_cliente}, '{dt_inicio}', '{dt_fim}'
         )
         """
