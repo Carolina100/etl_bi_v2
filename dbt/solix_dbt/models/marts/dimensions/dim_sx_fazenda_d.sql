@@ -35,11 +35,11 @@
   - garante a existencia do registro orfao
 #}
 
-{% set MODEL_ALIAS = 'SX_ESTADO_D' %}
-{% set STAGING_MODEL_NAME = 'stg_ds__sx_estado_d' %}
-{% set SEQUENCE_NAME = 'SOLIX_BI.DW.SEQ_SX_ESTADO_D' %}
-{% set SURROGATE_KEY_COLUMN = 'SK_ESTADO' %}
-{% set NATURAL_KEY_COLUMNS = ['ID_CLIENTE', 'CD_ESTADO'] %}
+{% set MODEL_ALIAS = 'SX_FAZENDA_D' %}
+{% set STAGING_MODEL_NAME = 'stg_ds__sx_fazenda_d' %}
+{% set SEQUENCE_NAME = 'SOLIX_BI.DW.SEQ_SX_FAZENDA_D' %}
+{% set SURROGATE_KEY_COLUMN = 'SK_FAZENDA' %}
+{% set NATURAL_KEY_COLUMNS = ['ID_CLIENTE', 'CD_FAZENDA', 'CD_ZONA', 'CD_TALHAO'] %}
 
 {{ config(
     materialized='incremental',
@@ -47,14 +47,19 @@
     incremental_strategy='merge',
     unique_key=NATURAL_KEY_COLUMNS,
     on_schema_change='sync_all_columns',
-    tags=['dw', 'dimension', 'sx_estado_d']
+    tags=['dw', 'dimension', 'sx_fazenda_d']
 ) }}
 
 with staged_source as (
     select
         ID_CLIENTE,
-        CD_ESTADO,
-        DESC_ESTADO,
+        CD_FAZENDA,
+        DESC_FAZENDA,
+        CD_TALHAO,
+        DESC_TALHAO,
+        CD_ZONA,
+        AREA_TOTAL,
+        DESC_PRODUTOR,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT
@@ -71,40 +76,56 @@ with staged_source as (
 existing_dimension as (
     {% if is_incremental() %}
     select
-        {{ SURROGATE_KEY_COLUMN }} as SK_ESTADO,
+        {{ SURROGATE_KEY_COLUMN }} as SK_FAZENDA,
         ID_CLIENTE,
-        CD_ESTADO
+        CD_FAZENDA,
+        CD_TALHAO,
+        CD_ZONA
     from {{ this }}
     {% else %}
     select
-        cast(null as number(38, 0)) as SK_ESTADO,
+        cast(null as number(38, 0)) as SK_FAZENDA,
         cast(null as number(38, 0)) as ID_CLIENTE,
-        cast(null as varchar) as CD_ESTADO
+        cast(null as varchar) as CD_FAZENDA,
+        cast(null as varchar) as CD_TALHAO,
+        cast(null as varchar) as CD_ZONA
     where 1 = 0
     {% endif %}
 ),
 
 business_rows as (
     select
-        coalesce(existing_dimension.SK_ESTADO, {{ SEQUENCE_NAME }}.nextval) as SK_ESTADO,
+        coalesce(existing_dimension.SK_FAZENDA, {{ SEQUENCE_NAME }}.nextval) as SK_FAZENDA,
         staged_source.ID_CLIENTE,
-        staged_source.CD_ESTADO,
-        upper(staged_source.DESC_ESTADO) as DESC_ESTADO,
+        staged_source.CD_FAZENDA,
+        upper(staged_source.DESC_FAZENDA) as DESC_FAZENDA,
+        staged_source.CD_TALHAO,
+        upper(staged_source.DESC_TALHAO) as DESC_TALHAO,
+        staged_source.CD_ZONA,
+        staged_source.AREA_TOTAL,
+        upper(staged_source.DESC_PRODUTOR) as DESC_PRODUTOR,
         staged_source.ETL_BATCH_ID,
         staged_source.BI_CREATED_AT,
         staged_source.BI_UPDATED_AT
     from staged_source
     left join existing_dimension
         on staged_source.ID_CLIENTE = existing_dimension.ID_CLIENTE
-       and staged_source.CD_ESTADO = existing_dimension.CD_ESTADO
+       and staged_source.CD_FAZENDA = existing_dimension.CD_FAZENDA
+         and staged_source.CD_TALHAO = existing_dimension.CD_TALHAO
+            and staged_source.CD_ZONA = existing_dimension.CD_ZONA
 ),
 
 orphan_row as (
     select
-        cast(-1 as number(38, 0)) as SK_ESTADO,
+        cast(-1 as number(38, 0)) as SK_FAZENDA,
         cast(-1 as number(38, 0)) as ID_CLIENTE,
-        cast('-1' as varchar) as CD_ESTADO,
-        cast('undefined' as varchar) as DESC_ESTADO,
+        cast('-1' as varchar) as CD_FAZENDA,
+        cast('undefined' as varchar) as DESC_FAZENDA,
+        cast('-1' as varchar) as CD_TALHAO,
+        cast('undefined' as varchar) as DESC_TALHAO,
+        cast('-1' as varchar) as CD_ZONA,
+        cast(-1 as number(38, 8)) as AREA_TOTAL,
+        cast('undefined' as varchar) as DESC_PRODUTOR,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
@@ -121,10 +142,15 @@ final as (
 )
 
 select
-    SK_ESTADO,
+    SK_FAZENDA,
     ID_CLIENTE,
-    CD_ESTADO,
-    DESC_ESTADO,
+    CD_FAZENDA,
+    DESC_FAZENDA,
+    CD_TALHAO,
+    DESC_TALHAO,
+    CD_ZONA,
+    AREA_TOTAL,
+    DESC_PRODUTOR,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT

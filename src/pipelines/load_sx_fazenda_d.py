@@ -24,7 +24,7 @@ BRAZIL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 # ============================================================================
 # CONFIGURACAO DA PIPELINE
 #
-# ESTE ARQUIVO IMPLEMENTA A CARGA DA ENTIDADE SX_OPERACAO_D NO NOVO PADRAO
+# ESTE ARQUIVO IMPLEMENTA A CARGA DA ENTIDADE SX_FAZENDA_D NO NOVO PADRAO
 # INCREMENTAL.
 #
 # O QUE ESTA PIPELINE FAZ:
@@ -61,29 +61,27 @@ BRAZIL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 # - o watermark so avanca quando a carga termina com sucesso
 # - o backfill manual continua disponivel como excecao operacional
 # - a chave natural do DS para esta entidade e:
-#   ID_CLIENTE + CD_OPERACAO
+#   ID_CLIENTE, CD_FAZENDA, CD_ZONA, CD_TALHAO
 # ============================================================================
 
-PIPELINE_NAME = "load_sx_operacao_d"
-OUTPUT_FOLDER_NAME = "sx_operacao_d"
-TARGET_TABLE = "SOLIX_BI.DS.SX_OPERACAO_D"
-SOURCE_NAME = "ORACLE.CDT_OPERACAO"
+PIPELINE_NAME = "load_sx_fazenda_d"
+OUTPUT_FOLDER_NAME = "sx_fazenda_d"
+TARGET_TABLE = "SOLIX_BI.DS.SX_FAZENDA_D"
+SOURCE_NAME = "ORACLE.GEO_LAYER_TALHAO"
 TARGET_COLUMNS = [
     "ID_CLIENTE",
-    "CD_OPERACAO",
-    "DESC_OPERACAO",
-    "CD_GRUPO_OPERACAO",
-    "DESC_GRUPO_OPERACAO",
-    "CD_GRUPO_PARADA",
-    "DESC_GRUPO_PARADA",
-    "FG_TIPO_OPERACAO",
-    "CD_PROCESSO_TALHAO",
-    "DESC_PROCESSO_TALHAO",
+    "CD_FAZENDA",
+    "DESC_FAZENDA",
+    "CD_TALHAO",
+    "DESC_TALHAO",
+    "CD_ZONA",
+    "AREA_TOTAL",
+    "DESC_PRODUTOR",
     "ETL_BATCH_ID",
     "BI_CREATED_AT",
     "BI_UPDATED_AT",
 ]
-NATURAL_KEY_COLUMNS = ["ID_CLIENTE", "CD_OPERACAO"]
+NATURAL_KEY_COLUMNS = ["ID_CLIENTE", "CD_FAZENDA", "CD_ZONA", "CD_TALHAO"]
 SOURCE_UPDATED_AT_COLUMN = "SOURCE_UPDATED_ON"
 LOAD_MODE_INCREMENTAL = "INCREMENTAL_WATERMARK"
 LOAD_MODE_MANUAL = "MANUAL_BACKFILL"
@@ -93,56 +91,40 @@ INCREMENTAL_LOOKBACK_MINUTES = 10
 ORACLE_EXTRACTION_QUERY = """
 WITH base AS (
     SELECT
-         :id_cliente AS ID_CLIENTE
-        ,o.cd_operacao AS CD_OPERACAO
-        ,o.desc_operac AS DESC_OPERACAO
-        ,NVL(o.cd_grupo_operac, -1) AS CD_GRUPO_OPERACAO
-        ,NVL(go.desc_grupo_operac, '* undefined *') AS DESC_GRUPO_OPERACAO
-        ,NVL(o.cd_grupo_parada, -1) AS CD_GRUPO_PARADA
-        ,NVL(gp.desc_grupo_parada, '* undefined *') AS DESC_GRUPO_PARADA
-        ,NVL(o.fg_tipo_operac, '-1') AS FG_TIPO_OPERACAO
-        ,COALESCE(o.cd_processo, -1) AS CD_PROCESSO_TALHAO
-        ,COALESCE(pt.desc_processo, '* undefined *') AS DESC_PROCESSO_TALHAO
-        ,GREATEST(
-            NVL(o.UPDATED_ON,  TO_DATE('1900-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')),
-            NVL(go.UPDATED_ON, TO_DATE('1900-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')),
-            NVL(gp.UPDATED_ON, TO_DATE('1900-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')),
-            NVL(pt.UPDATED_ON, TO_DATE('1900-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS'))
-        ) AS SOURCE_UPDATED_ON
-    FROM {name_owner}.cdt_operacao o
-    LEFT JOIN {name_owner}.cdt_grupo_operacao go
-        ON o.cd_grupo_operac = go.cd_grupo_operac
-    LEFT JOIN {name_owner}.cdt_grupo_parada gp
-        ON o.cd_grupo_parada = gp.cd_grupo_parada
-    LEFT JOIN {name_owner}.cdt_processos_talhao pt
-        ON o.cd_processo = pt.cd_processo
+        :id_cliente AS ID_CLIENTE,
+        e.FAZENDA AS CD_FAZENDA,
+        NVL(TRIM(e.nome_faz), e.fazenda) AS DESC_FAZENDA,
+        e.TALHAO AS CD_TALHAO,
+        NVL(NVL(TRIM(e.desc_talhao), to_char(TRIM(e.talhao))), '* undefined *') AS DESC_TALHAO,
+        e.ZONA AS CD_ZONA,
+        NVL(e.area_total, 0) AS AREA_TOTAL,
+        e.DESC_GROWER AS DESC_PRODUTOR,
+        CAST(e.UPDATED_ON AS TIMESTAMP) AS SOURCE_UPDATED_ON
+    FROM {name_owner}.geo_layer_talhao e
 ),
 ranked AS (
     SELECT
         base.*,
         ROW_NUMBER() OVER (
-            PARTITION BY ID_CLIENTE, CD_OPERACAO
+            PARTITION BY ID_CLIENTE, CD_FAZENDA, CD_ZONA, CD_TALHAO
             ORDER BY SOURCE_UPDATED_ON DESC
         ) AS RN
     FROM base
 )
 SELECT
     ID_CLIENTE,
-    CD_OPERACAO,
-    DESC_OPERACAO,
-    CD_GRUPO_OPERACAO,
-    DESC_GRUPO_OPERACAO,
-    CD_GRUPO_PARADA,
-    DESC_GRUPO_PARADA,
-    FG_TIPO_OPERACAO,
-    CD_PROCESSO_TALHAO,
-    DESC_PROCESSO_TALHAO,
+    CD_FAZENDA,
+    DESC_FAZENDA,
+    CD_TALHAO,
+    DESC_TALHAO,
+    CD_ZONA,
+    AREA_TOTAL,
+    DESC_PRODUTOR,
     SOURCE_UPDATED_ON
 FROM ranked
 WHERE RN = 1
   AND SOURCE_UPDATED_ON >= TO_TIMESTAMP(:updated_on_start, 'DD/MM/YYYY HH24:MI:SS')
   AND SOURCE_UPDATED_ON < TO_TIMESTAMP(:updated_on_end, 'DD/MM/YYYY HH24:MI:SS')
-
 """
 
 CLIENT_LOOKUP_QUERY = """

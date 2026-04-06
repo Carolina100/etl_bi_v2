@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: dim_sx_fazenda_d
+    description: "Dimensao DW de fazendas alimentada a partir do DS."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - ID_CLIENTE
+            - CD_FAZENDA
+            - CD_ZONA
+            - CD_TALHAO
+    columns:
+      - name: SK_FAZENDA
+        description: "Surrogate key da dimensao."
+        tests:
+          - not_null
+          - unique
+      - name: ID_CLIENTE
+        tests:
+          - not_null
+      - name: CD_FAZENDA
+        tests:
+          - not_null
+      - name: DESC_FAZENDA
+      - name: CD_TALHAO
+        tests:
+          - not_null
+      - name: DESC_TALHAO
+      - name: CD_ZONA
+        tests:
+          - not_null
+      - name: AREA_TOTAL
+      - name: DESC_PRODUTOR
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
+        tests:
+          - not_null
