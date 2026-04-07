@@ -51,15 +51,15 @@ ORDER BY ID_CLIENTE
 # - evita duplicar regra da pipeline no Airflow
 # - aproxima do desenho futuro com Airflow em producao
 # ============================================================================
-DAG_ID = "load_sx_fazenda_d_dag"
-PIPELINE_DESCRIPTION = "Carga Oracle -> Snowflake DS -> dbt DW para SX_FAZENDA_D"
-TAGS = ["oracle", "snowflake", "dbt", "ds", "dw", "sx_fazenda_d"]
+DAG_ID = "load_sx_equipamento_d_dag"
+PIPELINE_DESCRIPTION = "Carga Oracle -> Snowflake DS -> dbt DW para SX_EQUIPAMENTO_D"
+TAGS = ["oracle", "snowflake", "dbt", "ds", "dw", "sx_equipamento_d"]
 DBT_PROJECT_DIR = PROJECT_ROOT / "dbt" / "solix_dbt"
-DBT_SELECT_MODELS = ["stg_ds__sx_fazenda_d", "dim_sx_fazenda_d"]
+DBT_SELECT_MODELS = ["stg_ds__sx_equipamento_d", "dim_sx_equipamento_d"]
 PIPELINE_TASK_ID = "run_ds_pipeline"
-DW_PIPELINE_NAME = "dw_sx_fazenda_d_dbt"
-DW_SOURCE_NAME = "DBT.SOLIX_BI.DS.SX_FAZENDA_D"
-DW_TARGET_NAME = "SOLIX_BI.DW.SX_FAZENDA_D"
+DW_PIPELINE_NAME = "dw_sx_equipamento_d_dbt"
+DW_SOURCE_NAME = "DBT.SOLIX_BI.DS.SX_EQUIPAMENTO_D"
+DW_TARGET_NAME = "SOLIX_BI.DW.SX_EQUIPAMENTO_D"
 DW_MAIN_STEP_NAME = "DBT_BUILD"
 DS_QUEUE = "ds"
 DBT_QUEUE = "dbt"
@@ -111,7 +111,7 @@ MAX_ACTIVE_TASKS = 4
         "data_fim": Param(None, type=["null", "string"]),
     },
 )
-def load_sx_fazenda_d_dag():
+def load_sx_equipamento_d_dag():
     """
     DAG pronta para evolucao:
     - hoje: DS por cliente + DW ao final
@@ -187,7 +187,7 @@ def load_sx_fazenda_d_dag():
         max_retry_delay=timedelta(minutes=30),
     )
     def run_ds_pipeline_task(request: dict[str, Any]) -> dict[str, Any]:
-        from src.pipelines.load_sx_fazenda_d import run_pipeline
+        from src.pipelines.load_sx_equipamento_d import run_pipeline
 
         try:
             logger.info(
@@ -264,6 +264,7 @@ def load_sx_fazenda_d_dag():
             raise AirflowFailException(
                 "Nenhum cliente processado com sucesso na camada DS. A camada DW nao sera executada."
             )
+
         profiles_dir = os.getenv("DBT_PROFILES_DIR", str(DBT_PROJECT_DIR))
         audit_loader = SnowflakeLoader()
         audit_repository = AuditRepository(audit_loader)
@@ -487,4 +488,4 @@ def load_sx_fazenda_d_dag():
     run_dw_dbt_task.override(queue=DBT_QUEUE)(ds_summary, resolved_params)
 
 
-load_sx_fazenda_d = load_sx_fazenda_d_dag()
+load_sx_equipamento_d = load_sx_equipamento_d_dag()

@@ -5,11 +5,12 @@ models:
     description: "Modelo staging da tabela DS SX_FAZENDA_D."
     tests:
       - dbt_utils.unique_combination_of_columns:
-          combination_of_columns:
-            - ID_CLIENTE
-            - CD_FAZENDA
-            - CD_ZONA
-            - CD_TALHAO
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+              - CD_FAZENDA
+              - CD_ZONA
+              - CD_TALHAO
     columns:
       - name: ID_CLIENTE
         tests:

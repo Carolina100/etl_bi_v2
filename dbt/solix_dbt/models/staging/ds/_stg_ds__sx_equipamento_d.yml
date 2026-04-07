@@ -1,29 +1,28 @@
 version: 2
 
 models:
-  - name: stg_ds__sx_operacao_d
-    description: "Modelo staging da tabela DS SX_OPERACAO_D."
+  - name: stg_ds__sx_equipamento_d
+    description: "Staging da tabela DS de equipamentos."
     tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns:
               - ID_CLIENTE
-              - CD_OPERACAO
+              - CD_EQUIPAMENTO
     columns:
       - name: ID_CLIENTE
         tests:
           - not_null
-      - name: CD_OPERACAO
+      - name: CD_EQUIPAMENTO
         tests:
           - not_null
-      - name: DESC_OPERACAO
-      - name: CD_GRUPO_OPERACAO
-      - name: DESC_GRUPO_OPERACAO
-      - name: CD_GRUPO_PARADA
-      - name: DESC_GRUPO_PARADA
-      - name: FG_TIPO_OPERACAO
-      - name: CD_PROCESSO_TALHAO
-      - name: DESC_PROCESSO_TALHAO
+      - name: DESC_EQUIPAMENTO
+      - name: CD_MODELO_EQUIPAMENTO
+      - name: DESC_MODELO_EQUIPAMENTO
+      - name: CD_TIPO_EQUIPAMENTO
+      - name: DESC_TIPO_EQUIPAMENTO
+      - name: DESC_STATUS
+      - name: TP_USO_EQUIPAMENTO
       - name: ETL_BATCH_ID
         tests:
           - not_null

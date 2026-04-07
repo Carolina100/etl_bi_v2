@@ -15,3 +15,6 @@ sources:
       - name: sx_fazenda_d
         identifier: SX_FAZENDA_D
         description: "Tabela DS da entidade SX_FAZENDA_D."
+      - name: sx_equipamento_d
+        identifier: SX_EQUIPAMENTO_D
+        description: "Tabela DS da entidade SX_EQUIPAMENTO_D."

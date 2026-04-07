@@ -25,6 +25,11 @@ class SnowflakeLoader:
             cur.execute(sql)
             return cur.fetchone()
 
+    def fetch_all(self, sql: str):
+        with self.conn.cursor() as cur:
+            cur.execute(sql)
+            return cur.fetchall()
+
     def upload_file_to_stage(self, local_file_path: str, stage_name: str) -> None:
         resolved = Path(local_file_path).resolve().as_posix()
         sql = f"PUT file://{resolved} {stage_name} OVERWRITE=TRUE AUTO_COMPRESS=FALSE"

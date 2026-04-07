@@ -5,9 +5,10 @@ models:
     description: "Modelo staging da tabela DS SX_ESTADO_D."
     tests:
       - dbt_utils.unique_combination_of_columns:
-          combination_of_columns:
-            - ID_CLIENTE
-            - CD_ESTADO
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+              - CD_ESTADO
     columns:
       - name: ID_CLIENTE
         tests:

@@ -19,7 +19,11 @@ def ensure_env_var(name: str) -> str:
     return value
 
 
-def normalize_client_conf(raw_conf: dict[str, Any]) -> dict[str, Any]:
+def normalize_client_conf(
+    raw_conf: dict[str, Any],
+    *,
+    allow_missing_client: bool = False,
+) -> dict[str, Any]:
     id_clientes = raw_conf.get("id_clientes")
     id_cliente = raw_conf.get("id_cliente")
 
@@ -35,9 +39,12 @@ def normalize_client_conf(raw_conf: dict[str, Any]) -> dict[str, Any]:
     elif id_cliente is not None:
         normalized_ids = [int(id_cliente)]
     else:
-        raise AirflowFailException(
-            "Informe 'id_cliente' ou 'id_clientes' no dag_run.conf."
-        )
+        if allow_missing_client:
+            normalized_ids = []
+        else:
+            raise AirflowFailException(
+                "Informe 'id_cliente' ou 'id_clientes' no dag_run.conf."
+            )
 
     data_inicio = raw_conf.get("data_inicio")
     data_fim = raw_conf.get("data_fim")
