@@ -104,7 +104,7 @@ orphan_row as (
         cast(-1 as number(38, 0)) as SK_ESTADO,
         cast(-1 as number(38, 0)) as ID_CLIENTE,
         cast('-1' as varchar) as CD_ESTADO,
-        cast('undefined' as varchar) as DESC_ESTADO,
+        cast('UNDEFINED' as varchar) as DESC_ESTADO,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT

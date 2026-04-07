@@ -95,7 +95,7 @@ WITH base AS (
         e.FAZENDA AS CD_FAZENDA,
         NVL(TRIM(e.nome_faz), e.fazenda) AS DESC_FAZENDA,
         e.TALHAO AS CD_TALHAO,
-        NVL(NVL(TRIM(e.desc_talhao), to_char(TRIM(e.talhao))), '* undefined *') AS DESC_TALHAO,
+        NVL(NVL(TRIM(e.desc_talhao), to_char(TRIM(e.talhao))), '* UNDEFINED *') AS DESC_TALHAO,
         e.ZONA AS CD_ZONA,
         NVL(e.area_total, 0) AS AREA_TOTAL,
         e.DESC_GROWER AS DESC_PRODUTOR,

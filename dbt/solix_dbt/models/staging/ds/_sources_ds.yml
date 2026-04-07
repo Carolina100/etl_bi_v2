@@ -21,3 +21,6 @@ sources:
       - name: sx_frente_d
         identifier: SX_FRENTE_D
         description: "Tabela DS da entidade SX_FRENTE_D."
+      - name: sx_ordem_servico_d
+        identifier: SX_ORDEM_SERVICO_D
+        description: "Tabela DS da entidade SX_ORDEM_SERVICO_D."
