@@ -35,6 +35,8 @@ Modelo de referência para novas entidades:
 - use o fluxo completo de `SX_ESTADO_D` como base funcional
 - guia de replicação:
   - `docs/TEMPLATES.md`
+- guia das DAGs:
+  - `docs/AIRFLOW_DAGS.md`
 
 ## Arquitetura de execução
 

@@ -18,3 +18,6 @@ sources:
       - name: sx_equipamento_d
         identifier: SX_EQUIPAMENTO_D
         description: "Tabela DS da entidade SX_EQUIPAMENTO_D."
+      - name: sx_frente_d
+        identifier: SX_FRENTE_D
+        description: "Tabela DS da entidade SX_FRENTE_D."
