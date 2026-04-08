@@ -79,6 +79,7 @@ TARGET_COLUMNS = [
     "FG_TIPO_OPERACAO",
     "CD_PROCESSO_TALHAO",
     "DESC_PROCESSO_TALHAO",
+    "FG_ATIVO",
     "ETL_BATCH_ID",
     "BI_CREATED_AT",
     "BI_UPDATED_AT",
@@ -87,6 +88,7 @@ NATURAL_KEY_COLUMNS = ["ID_CLIENTE", "CD_OPERACAO"]
 SOURCE_UPDATED_AT_COLUMN = "SOURCE_UPDATED_ON"
 LOAD_MODE_INCREMENTAL = "INCREMENTAL_WATERMARK"
 LOAD_MODE_MANUAL = "MANUAL_BACKFILL"
+LOAD_MODE_FULL = "FULL_RECONCILIATION"
 INITIAL_INCREMENTAL_START = datetime(1900, 1, 1, 0, 0, 0)
 INCREMENTAL_LOOKBACK_MINUTES = 10
 
@@ -330,6 +332,7 @@ def prepare_dataframe_for_load(
     bi_timestamp: str,
 ) -> pd.DataFrame:
     prepared = dataframe.copy()
+    prepared["FG_ATIVO"] = 1
     prepared["ETL_BATCH_ID"] = etl_batch_id
     prepared["BI_CREATED_AT"] = bi_timestamp
     prepared["BI_UPDATED_AT"] = bi_timestamp
@@ -359,7 +362,12 @@ def save_dataframe_to_csv(dataframe: pd.DataFrame, output_file_path: Path) -> Pa
     return output_file_path
 
 
-def load_data_to_snowflake(output_file_path: Path) -> None:
+def load_data_to_snowflake(
+    output_file_path: Path,
+    *,
+    id_cliente: int,
+    full_reconciliation: bool,
+) -> None:
     logger.info("Enviando arquivo para o stage %s.", Settings.SNOWFLAKE_STAGE)
 
     loader = SnowflakeLoader()
@@ -378,6 +386,9 @@ def load_data_to_snowflake(output_file_path: Path) -> None:
             key_columns=NATURAL_KEY_COLUMNS,
             preserve_on_update_columns=["BI_CREATED_AT"],
             update_current_timestamp_columns=["BI_UPDATED_AT"],
+            mark_missing_as_inactive=full_reconciliation,
+            inactive_flag_column="FG_ATIVO",
+            scope_condition_sql=f"t.ID_CLIENTE = {int(id_cliente)}",
         )
     finally:
         loader.close()
@@ -418,10 +429,29 @@ def resolve_load_window(
     watermark_repository: WatermarkRepository,
     data_inicio_text: str | None,
     data_fim_text: str | None,
+    full_reconciliation: bool,
 ) -> dict[str, object]:
     manual_range_informed = bool(data_inicio_text or data_fim_text)
     if manual_range_informed and not (data_inicio_text and data_fim_text):
         raise ValueError("Informe data_inicio e data_fim juntos para executar backfill manual.")
+    if manual_range_informed and full_reconciliation:
+        raise ValueError(
+            "Use datas para backfill manual ou full_reconciliation, mas nao os dois ao mesmo tempo."
+        )
+
+    if full_reconciliation:
+        extraction_ended_at = datetime.now(BRAZIL_TIMEZONE).replace(tzinfo=None)
+        return {
+            "load_mode": LOAD_MODE_FULL,
+            "manual_data_inicio": None,
+            "manual_data_fim": None,
+            "extraction_started_at": INITIAL_INCREMENTAL_START,
+            "extraction_ended_at": extraction_ended_at,
+            "last_watermark": watermark_repository.get_last_source_updated_at(
+                pipeline_name=PIPELINE_NAME,
+                id_cliente=id_cliente,
+            ),
+        }
 
     if data_inicio_text and data_fim_text:
         data_inicio = parse_date(data_inicio_text)
@@ -481,6 +511,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         required=False,
         help="Data final no formato YYYY-MM-DD. Opcional para backfill manual.",
     )
+    parser.add_argument(
+        "--full_reconciliation",
+        action="store_true",
+        help="Executa foto completa da fonte e inativa no DS os registros ausentes para o cliente.",
+    )
     return parser
 
 
@@ -488,6 +523,7 @@ def run_pipeline(
     id_cliente: int,
     data_inicio_text: str | None = None,
     data_fim_text: str | None = None,
+    full_reconciliation: bool = False,
 ) -> dict[str, str | int | None]:
     output_file_path: Path | None = None
     batch_id: str | None = None
@@ -513,6 +549,13 @@ def run_pipeline(
             watermark_repository=watermark_repository,
             data_inicio_text=data_inicio_text,
             data_fim_text=data_fim_text,
+            full_reconciliation=full_reconciliation,
+        )
+        watermark_repository.mark_run_started(
+            pipeline_name=PIPELINE_NAME,
+            id_cliente=id_cliente,
+            batch_id=batch_id,
+            run_started_at=datetime.now(BRAZIL_TIMEZONE).replace(tzinfo=None),
         )
 
         resolved_load_mode = str(load_window["load_mode"])
@@ -550,6 +593,20 @@ def run_pipeline(
             updated_on_end=extraction_end,
         )
         max_source_updated_on = normalize_source_updated_on(dataframe)
+        extract_details = (
+            f"Extracao concluida para id_cliente={id_cliente}, "
+            f"name_owner={name_owner}, load_mode={resolved_load_mode}, "
+            f"janela={extraction_start} a {extraction_end}, "
+            f"max_source_updated_on={max_source_updated_on}."
+        )
+        if dataframe.empty:
+            extract_details = (
+                f"Extracao concluida sem dados para id_cliente={id_cliente}, "
+                f"name_owner={name_owner}, load_mode={resolved_load_mode}, "
+                f"janela={extraction_start} a {extraction_end}. "
+                "Nenhum registro foi encontrado na origem para esta entidade "
+                "e nenhuma linha sera aplicada no DS."
+            )
 
         audit_repository.insert_audit_event(
             batch_id=batch_id,
@@ -558,19 +615,15 @@ def run_pipeline(
             target_name=TARGET_TABLE,
             status="SUCCESS",
             rows_processed=len(dataframe),
-            details=(
-                f"Extracao concluida para id_cliente={id_cliente}, "
-                f"name_owner={name_owner}, load_mode={resolved_load_mode}, "
-                f"janela={extraction_start} a {extraction_end}, "
-                f"max_source_updated_on={max_source_updated_on}."
-            ),
+            details=extract_details,
             id_cliente=id_cliente,
             dt_inicio=audit_dt_inicio,
             dt_fim=audit_dt_fim,
         )
 
         rows_loaded = 0
-        if not dataframe.empty:
+        should_apply_to_ds = full_reconciliation or not dataframe.empty
+        if should_apply_to_ds:
             dataframe_to_load = prepare_dataframe_for_load(
                 dataframe=dataframe,
                 etl_batch_id=etl_batch_id,
@@ -582,12 +635,17 @@ def run_pipeline(
                 data_fim=extraction_end,
             )
             save_dataframe_to_csv(dataframe_to_load, output_file_path)
-            load_data_to_snowflake(output_file_path)
+            load_data_to_snowflake(
+                output_file_path,
+                id_cliente=id_cliente,
+                full_reconciliation=full_reconciliation,
+            )
             rows_loaded = len(dataframe_to_load)
             logger.info(
-                "Carga incremental concluida para id_cliente=%s. Linhas aplicadas no DS=%s.",
+                "Carga concluida para id_cliente=%s. Linhas aplicadas no DS=%s. load_mode=%s.",
                 id_cliente,
                 rows_loaded,
+                resolved_load_mode,
             )
         else:
             logger.info(
@@ -605,8 +663,13 @@ def run_pipeline(
             status="SUCCESS",
             rows_processed=rows_loaded,
             details=(
-                f"Merge incremental concluido na tabela {TARGET_TABLE} "
-                f"para id_cliente={id_cliente}. load_mode={resolved_load_mode}."
+                f"Merge concluido na tabela {TARGET_TABLE} para id_cliente={id_cliente}. "
+                f"load_mode={resolved_load_mode}. rows_loaded={rows_loaded}. "
+                + (
+                    "Nenhuma linha foi aplicada porque nao ha registros na origem para esta entidade."
+                    if rows_loaded == 0
+                    else "Linhas da janela processada foram reconciliadas com sucesso no DS."
+                )
             ),
             id_cliente=id_cliente,
             dt_inicio=audit_dt_inicio,
@@ -622,6 +685,7 @@ def run_pipeline(
                 load_mode=resolved_load_mode,
                 extraction_started_at=extraction_started_at,
                 extraction_ended_at=extraction_ended_at,
+                run_committed_at=datetime.now(BRAZIL_TIMEZONE).replace(tzinfo=None),
             )
             logger.info(
                 "Watermark atualizado para id_cliente=%s com SOURCE_UPDATED_ON=%s.",
@@ -687,6 +751,7 @@ def main() -> None:
         id_cliente=args.id_cliente,
         data_inicio_text=args.data_inicio,
         data_fim_text=args.data_fim,
+        full_reconciliation=args.full_reconciliation,
     )
 
 

@@ -28,6 +28,9 @@ models:
       - name: DESC_TALHAO
       - name: AREA_TOTAL
       - name: DESC_PRODUTOR
+      - name: FG_ATIVO
+        tests:
+          - not_null
       - name: ETL_BATCH_ID
         tests:
           - not_null

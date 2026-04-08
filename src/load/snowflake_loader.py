@@ -75,6 +75,9 @@ class SnowflakeLoader:
         key_columns: list[str],
         preserve_on_update_columns: list[str] | None = None,
         update_current_timestamp_columns: list[str] | None = None,
+        mark_missing_as_inactive: bool = False,
+        inactive_flag_column: str = "FG_ATIVO",
+        scope_condition_sql: str | None = None,
     ) -> None:
         temp_table_name = f"TMP_{uuid.uuid4().hex[:20].upper()}"
         preserve_on_update_columns = preserve_on_update_columns or []
@@ -123,4 +126,33 @@ class SnowflakeLoader:
                 VALUES ({insert_values})
             """
         )
+        if mark_missing_as_inactive:
+            if not scope_condition_sql:
+                raise ValueError(
+                    "scope_condition_sql e obrigatorio quando mark_missing_as_inactive=True."
+                )
+
+            inactive_assignments = [f"t.{inactive_flag_column} = 0"]
+            for column in update_current_timestamp_columns:
+                inactive_assignments.append(
+                    "t."
+                    + column
+                    + " = CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+                )
+
+            inactive_set = ",\n                    ".join(inactive_assignments)
+            self.execute(
+                f"""
+                UPDATE {full_table_name} AS t
+                SET
+                    {inactive_set}
+                WHERE {scope_condition_sql}
+                  AND COALESCE(t.{inactive_flag_column}, 1) <> 0
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM {temp_table_name} AS s
+                      WHERE {merge_condition}
+                  )
+                """
+            )
         self.remove_file_from_stage(stage_name=stage_name, file_name=file_name)

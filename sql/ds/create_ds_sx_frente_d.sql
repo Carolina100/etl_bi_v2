@@ -9,6 +9,7 @@ create table if not exists SOLIX_BI.DS.SX_FRENTE_D (
     DESC_UNIDADE varchar(1000),
     DESC_FRENTE varchar(1000),
     FG_FRENTE_TRABALHO number(38, 0),
+    FG_ATIVO number(1, 0) not null default 1,
     ETL_BATCH_ID varchar,
     BI_CREATED_AT timestamp_ntz,
     BI_UPDATED_AT timestamp_ntz,

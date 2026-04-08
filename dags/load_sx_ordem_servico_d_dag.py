@@ -109,6 +109,7 @@ MAX_ACTIVE_TASKS = 4
         "id_clientes": Param(None, type=["null", "array"]),
         "data_inicio": Param(None, type=["null", "string"]),
         "data_fim": Param(None, type=["null", "string"]),
+        "full_reconciliation": Param(False, type="boolean"),
     },
 )
 def load_sx_ordem_servico_d_dag():
@@ -128,11 +129,12 @@ def load_sx_ordem_servico_d_dag():
         normalized_conf = normalize_client_conf(raw_conf, allow_missing_client=True)
 
         logger.info(
-            "Parametros validados. id_clientes=%s, load_mode=%s, data_inicio=%s, data_fim=%s",
+            "Parametros validados. id_clientes=%s, load_mode=%s, data_inicio=%s, data_fim=%s, full_reconciliation=%s",
             normalized_conf["id_clientes"],
             normalized_conf["load_mode"],
             normalized_conf["data_inicio"],
             normalized_conf["data_fim"],
+            normalized_conf["full_reconciliation"],
         )
         return normalized_conf
 
@@ -173,6 +175,7 @@ def load_sx_ordem_servico_d_dag():
                 "id_cliente": id_cliente,
                 "data_inicio": payload["data_inicio"],
                 "data_fim": payload["data_fim"],
+                "full_reconciliation": payload["full_reconciliation"],
             }
             for id_cliente in payload["id_clientes"]
         ]
@@ -191,16 +194,18 @@ def load_sx_ordem_servico_d_dag():
 
         try:
             logger.info(
-                "Executando camada DS para id_cliente=%s, data_inicio=%s, data_fim=%s",
+                "Executando camada DS para id_cliente=%s, data_inicio=%s, data_fim=%s, full_reconciliation=%s",
                 request["id_cliente"],
                 request["data_inicio"],
                 request["data_fim"],
+                request["full_reconciliation"],
             )
 
             result = run_pipeline(
                 id_cliente=int(request["id_cliente"]),
                 data_inicio_text=request["data_inicio"],
                 data_fim_text=request["data_fim"],
+                full_reconciliation=bool(request["full_reconciliation"]),
             )
 
             logger.info("Camada DS concluida com resultado: %s", result)

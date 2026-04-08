@@ -70,6 +70,7 @@ with staged_source as (
         FG_STATUS,
         VL_ORDEM_SERVICO,
         TICKET_NUMBER,
+        FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT
@@ -120,6 +121,7 @@ business_rows as (
         staged_source.FG_STATUS,
         upper(staged_source.VL_ORDEM_SERVICO) as VL_ORDEM_SERVICO,
         staged_source.TICKET_NUMBER,
+        staged_source.FG_ATIVO,
         staged_source.ETL_BATCH_ID,
         staged_source.BI_CREATED_AT,
         staged_source.BI_UPDATED_AT
@@ -150,6 +152,7 @@ orphan_row as (
         cast(-1 as number(38, 0)) as FG_STATUS,
         cast('UNDEFINED' as varchar) as VL_ORDEM_SERVICO,
         cast(-1 as number(38, 0)) as TICKET_NUMBER,
+        cast(-1 as number(1, 0)) as FG_ATIVO,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
@@ -185,6 +188,7 @@ select
     FG_STATUS,
     VL_ORDEM_SERVICO,
     TICKET_NUMBER,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT

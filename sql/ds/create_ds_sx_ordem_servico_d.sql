@@ -17,6 +17,7 @@ create table if not exists SOLIX_BI.DS.SX_ORDEM_SERVICO_D (
     FG_STATUS number(38, 0),
     VL_ORDEM_SERVICO varchar(4000),
     TICKET_NUMBER number(38, 0),
+    FG_ATIVO number(1, 0) not null default 1,
     ETL_BATCH_ID varchar,
     BI_CREATED_AT timestamp_ntz,
     BI_UPDATED_AT timestamp_ntz,

@@ -1,9 +1,10 @@
 # Carga Incremental por Watermark
 
-O fluxo de `SX_ESTADO_D` passou a operar em dois modos:
+O fluxo das dimensoes `SX_ESTADO_D`, `SX_OPERACAO_D`, `SX_FAZENDA_D`, `SX_EQUIPAMENTO_D`, `SX_FRENTE_D` e `SX_ORDEM_SERVICO_D` passou a operar em tres modos:
 
 - `INCREMENTAL_WATERMARK`
 - `MANUAL_BACKFILL`
+- `FULL_RECONCILIATION`
 
 ## Comportamento padrão
 
@@ -28,6 +29,46 @@ Esse modo é o trilho operacional para:
 - reprocessamento histórico
 - validação controlada por período
 
+## Reconciliação full das dimensões
+
+As dimensões passaram a contar também com um modo de reconciliação full.
+
+Esse modo existe para tratar um problema que o incremental por `UPDATED_ON` não enxerga bem:
+
+- cadastros removidos da fonte
+- registros que deixaram de existir no sistema transacional
+
+No desenho atual, não apagamos fisicamente esses registros do `DW`.
+Em vez disso:
+
+- a foto completa da dimensão é lida da fonte
+- o `DS` continua recebendo os registros presentes como `FG_ATIVO = 1`
+- os registros daquele cliente que já existiam no `DS` e não aparecerem mais na foto da fonte são marcados como `FG_ATIVO = 0`
+- o `DW` consome esse resultado reconciliado e passa a refletir a mesma inativação
+
+Em outras palavras:
+
+- o `DS` continua sendo a camada onde a reconciliação com a fonte acontece
+- o `DW` recebe a dimensão já reconciliada, inclusive com os registros inativos
+
+### Quando usar
+
+`FULL_RECONCILIATION` deve ser usado como trilho de consistência das dimensões, normalmente:
+
+- uma vez por dia
+- ou em execuções controladas após manutenção/correção na origem
+
+### Janela enviada para a fonte
+
+Na `FULL_RECONCILIATION`, a query Oracle continua usando a mesma estrutura técnica da pipeline, mas a janela é aberta desde o início:
+
+- início:
+  - `1900-01-01 00:00:00`
+- fim:
+  - timestamp atual da execução
+
+Na prática, isso equivale a pedir à fonte a foto completa da dimensão para o cliente.
+
 ## Estratégia de carga no DS
 
 A camada DS deixou de funcionar como `DELETE + COPY` por cliente e passou a funcionar como `PUT + COPY para tabela temporária + MERGE`.
@@ -37,6 +78,16 @@ Para `SX_ESTADO_D`, a chave natural usada no merge é:
 - `ID_CLIENTE`
 - `CD_ESTADO`
 
+Para as dimensões reconciliadas, o `MERGE` agora também suporta a marcação de ausentes no modo `FULL_RECONCILIATION`.
+
+Nesse cenário:
+
+1. a foto atual da dimensão é carregada em tabela temporária
+2. o `MERGE` insere/atualiza os registros presentes
+3. em seguida, o `DS` atualiza `FG_ATIVO = 0` para os registros do cliente que não aparecerem na foto atual
+
+Isso permite manter consistência com a fonte sem destruir o histórico técnico do BI.
+
 ## Colunas técnicas no BI
 
 Na tabela DS, a recomendação adotada passou a ser:
@@ -45,6 +96,9 @@ Na tabela DS, a recomendação adotada passou a ser:
   - quando o registro entrou pela primeira vez no BI
 - `BI_UPDATED_AT`
   - quando o registro foi atualizado pela última vez no BI
+- `FG_ATIVO`
+  - `1` quando o registro esta presente/ativo na foto atual da fonte
+  - `0` quando o registro deixou de aparecer na fonte e foi inativado pela reconciliação full
 
 Regra aplicada no `MERGE`:
 
@@ -63,6 +117,15 @@ As dimensoes no dbt tambem passam a trabalhar de forma incremental:
 - nas execucoes seguintes, o `staged_source` filtra apenas linhas com `BI_UPDATED_AT`
   maior que o maximo ja existente no DW
 - o `merge` do dbt atualiza ou insere apenas o delta da camada DS
+
+Como a reconciliação de ausentes acontece no `DS`, o `DW` tambem passou a receber `FG_ATIVO`.
+
+Isso é necessário porque, se o `DW` trouxesse apenas os registros ativos, uma inativação ocorrida no `DS` nao seria propagada sozinha para a dimensão analítica.
+
+Resumo da regra:
+
+- o `DS` decide quem ficou inativo
+- o `DW` recebe essa decisão e passa a refletir o mesmo estado
 
 Isso reduz:
 
@@ -83,6 +146,9 @@ create table if not exists SOLIX_BI.DS.CTL_PIPELINE_WATERMARK (
     LAST_LOAD_MODE varchar,
     LAST_EXTRACT_STARTED_AT timestamp_ntz,
     LAST_EXTRACT_ENDED_AT timestamp_ntz,
+    LAST_RUN_BATCH_ID varchar,
+    LAST_RUN_STARTED_AT timestamp_ntz,
+    LAST_RUN_COMMITTED_AT timestamp_ntz,
     UPDATED_AT timestamp_ntz,
     constraint PK_CTL_PIPELINE_WATERMARK primary key (PIPELINE_NAME, ID_CLIENTE)
 );
@@ -97,8 +163,13 @@ Se a tabela `SOLIX_BI.DS.SX_ESTADO_D` ja existir, ela precisa conter tambem:
 ```sql
 alter table SOLIX_BI.DS.SX_ESTADO_D add column if not exists BI_CREATED_AT timestamp_ntz;
 alter table SOLIX_BI.DS.SX_ESTADO_D add column if not exists BI_UPDATED_AT timestamp_ntz;
+alter table SOLIX_BI.DS.SX_ESTADO_D add column if not exists FG_ATIVO number(1, 0) not null default 1;
 alter table SOLIX_BI.DS.SX_ESTADO_D drop column if exists ETL_LOADED_AT;
 ```
+
+Para as demais dimensões do projeto, existe o script:
+
+- [alter_ds_dimensions_add_fg_ativo.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/sql/ds/alter_ds_dimensions_add_fg_ativo.sql)
 
 ## Como a janela é resolvida
 
@@ -123,6 +194,19 @@ alter table SOLIX_BI.DS.SX_ESTADO_D drop column if exists ETL_LOADED_AT;
 
 Observação:
 - a query usa intervalo semiaberto: `>= início` e `< fim`
+
+### Full reconciliation
+
+- início:
+  - `1900-01-01 00:00:00`
+- fim:
+  - timestamp atual da execução
+
+Objetivo:
+
+- reconstruir a foto corrente da dimensão na fonte
+- identificar ausentes
+- inativar ausentes no `DS`
 
 ## Query Oracle
 
@@ -192,12 +276,32 @@ No trigger da DAG, informe apenas:
 }
 ```
 
+### Airflow com full reconciliation
+
+Para um cliente:
+
+```json
+{
+  "id_cliente": 7,
+  "full_reconciliation": true
+}
+```
+
+Para todos os clientes ativos:
+
+```json
+{
+  "full_reconciliation": true
+}
+```
+
 ## Auditoria
 
 O modo de execução passa a aparecer nos detalhes dos eventos:
 
 - `load_mode=INCREMENTAL_WATERMARK`
 - `load_mode=MANUAL_BACKFILL`
+- `load_mode=FULL_RECONCILIATION`
 
 Os resultados da DS também retornam:
 
@@ -206,6 +310,21 @@ Os resultados da DS também retornam:
 - `max_source_updated_on`
 
 Isso permite que o DW registre a janela real processada, mesmo quando cada cliente usa um watermark diferente.
+
+Além do watermark principal, a tabela também registra:
+
+- `LAST_RUN_BATCH_ID`
+- `LAST_RUN_STARTED_AT`
+- `LAST_RUN_COMMITTED_AT`
+
+Esses campos nao substituem o `LAST_SOURCE_UPDATED_AT` como motor do incremental.
+Eles existem para melhorar a rastreabilidade operacional:
+
+- quando a execucao comeca, `LAST_RUN_STARTED_AT` e preenchido
+- enquanto a execucao ainda nao terminou com sucesso, `LAST_RUN_COMMITTED_AT` fica `NULL`
+- quando a carga DS termina com sucesso e o watermark e confirmado, `LAST_RUN_COMMITTED_AT` e preenchido
+
+Isso ajuda a identificar execucoes interrompidas ou incompletas sem alterar a logica principal da janela incremental.
 
 Observacao de timezone:
 

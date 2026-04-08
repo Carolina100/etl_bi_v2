@@ -39,6 +39,7 @@ with source_data as (
         FG_STATUS,
         VL_ORDEM_SERVICO,
         TICKET_NUMBER,
+        FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT
@@ -65,6 +66,7 @@ typed_data as (
         cast(FG_STATUS as number(38, 0)) as FG_STATUS,
         cast(VL_ORDEM_SERVICO as varchar) as VL_ORDEM_SERVICO,
         cast(TICKET_NUMBER as number(38, 0)) as TICKET_NUMBER,
+        cast(FG_ATIVO as number(1, 0)) as FG_ATIVO,
         cast(ETL_BATCH_ID as varchar) as ETL_BATCH_ID,
         cast(BI_CREATED_AT as timestamp_ntz) as BI_CREATED_AT,
         cast(BI_UPDATED_AT as timestamp_ntz) as BI_UPDATED_AT
@@ -100,6 +102,7 @@ select
     FG_STATUS,
     VL_ORDEM_SERVICO,
     TICKET_NUMBER,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT

@@ -61,6 +61,7 @@ with staged_source as (
         DESC_TIPO_EQUIPAMENTO,
         DESC_STATUS,
         TP_USO_EQUIPAMENTO,
+        FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT
@@ -102,6 +103,7 @@ business_rows as (
         upper(staged_source.DESC_TIPO_EQUIPAMENTO) as DESC_TIPO_EQUIPAMENTO,
         staged_source.DESC_STATUS,
         staged_source.TP_USO_EQUIPAMENTO,
+        staged_source.FG_ATIVO,
         staged_source.ETL_BATCH_ID,
         staged_source.BI_CREATED_AT,
         staged_source.BI_UPDATED_AT
@@ -123,6 +125,7 @@ orphan_row as (
         cast('UNDEFINED' as varchar) as DESC_TIPO_EQUIPAMENTO,
         cast('UNDEFINED' as varchar) as DESC_STATUS,
         cast(-1 as number(38, 0)) as TP_USO_EQUIPAMENTO,
+        cast(-1 as number(1, 0)) as FG_ATIVO,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
@@ -149,6 +152,7 @@ select
     DESC_TIPO_EQUIPAMENTO,
     DESC_STATUS,
     TP_USO_EQUIPAMENTO,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT

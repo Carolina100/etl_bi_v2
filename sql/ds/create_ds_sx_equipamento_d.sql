@@ -8,6 +8,7 @@ create table if not exists SOLIX_BI.DS.SX_EQUIPAMENTO_D (
     DESC_TIPO_EQUIPAMENTO varchar(1000),
     DESC_STATUS varchar(20),
     TP_USO_EQUIPAMENTO number(38, 0),
+    FG_ATIVO number(1, 0) not null default 1,
     ETL_BATCH_ID varchar,
     BI_CREATED_AT timestamp_ntz,
     BI_UPDATED_AT timestamp_ntz,

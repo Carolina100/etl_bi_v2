@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -48,18 +49,28 @@ def normalize_client_conf(
 
     data_inicio = raw_conf.get("data_inicio")
     data_fim = raw_conf.get("data_fim")
+    full_reconciliation = bool(raw_conf.get("full_reconciliation") or False)
     manual_window_informed = data_inicio is not None or data_fim is not None
     if manual_window_informed and not (data_inicio and data_fim):
         raise AirflowFailException(
             "Informe 'data_inicio' e 'data_fim' juntos para backfill manual."
         )
+    if manual_window_informed and full_reconciliation:
+        raise AirflowFailException(
+            "Use ou 'data_inicio'/'data_fim' para backfill manual, ou 'full_reconciliation=true'."
+        )
 
-    load_mode = "MANUAL_BACKFILL" if manual_window_informed else "INCREMENTAL_WATERMARK"
+    load_mode = "INCREMENTAL_WATERMARK"
+    if full_reconciliation:
+        load_mode = "FULL_RECONCILIATION"
+    elif manual_window_informed:
+        load_mode = "MANUAL_BACKFILL"
 
     return {
         "id_clientes": normalized_ids,
         "data_inicio": str(data_inicio) if data_inicio else None,
         "data_fim": str(data_fim) if data_fim else None,
+        "full_reconciliation": full_reconciliation,
         "load_mode": load_mode,
     }
 
@@ -76,42 +87,46 @@ def run_dbt_command(
     ensure_env_var("SNOWFLAKE_ROLE_DBT")
     ensure_env_var("SNOWFLAKE_PRIVATE_KEY_PATH")
 
-    target_dir = Path(dbt_project_dir) / "target"
-    if target_dir.exists():
-        shutil.rmtree(target_dir)
+    target_dir = Path(dbt_project_dir) / f"target_airflow_{uuid.uuid4().hex[:8]}"
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     command = ["dbt", "build", "--no-partial-parse", "--select", *select_models]
     env = os.environ.copy()
     env["DBT_PROFILES_DIR"] = dbt_profiles_dir
+    env["DBT_TARGET_PATH"] = str(target_dir)
 
-    completed = subprocess.run(
-        command,
-        cwd=dbt_project_dir,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if completed.returncode != 0:
-        raise AirflowFailException(
-            "Falha na camada DW. "
-            f"returncode={completed.returncode}. "
-            f"stdout={completed.stdout.strip()} "
-            f"stderr={completed.stderr.strip()}"
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=dbt_project_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
-    run_results_path = Path(dbt_project_dir) / "target" / "run_results.json"
-    run_results = load_dbt_run_results(run_results_path)
+        if completed.returncode != 0:
+            raise AirflowFailException(
+                "Falha na camada DW. "
+                f"returncode={completed.returncode}. "
+                f"stdout={completed.stdout.strip()} "
+                f"stderr={completed.stderr.strip()}"
+            )
 
-    return {
-        "status": "SUCCESS",
-        "dbt_command": " ".join(command),
-        "profiles_dir": dbt_profiles_dir,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
-        "run_results": run_results,
-    }
+        run_results_path = target_dir / "run_results.json"
+        run_results = load_dbt_run_results(run_results_path)
+
+        return {
+            "status": "SUCCESS",
+            "dbt_command": " ".join(command),
+            "profiles_dir": dbt_profiles_dir,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "run_results": run_results,
+        }
+    finally:
+        if target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
 
 
 def load_dbt_run_results(run_results_path: Path) -> dict[str, Any]:

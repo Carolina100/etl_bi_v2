@@ -17,6 +17,9 @@ models:
         tests:
           - not_null
       - name: DESC_ESTADO
+      - name: FG_ATIVO
+        tests:
+          - not_null
       - name: ETL_BATCH_ID
         tests:
           - not_null

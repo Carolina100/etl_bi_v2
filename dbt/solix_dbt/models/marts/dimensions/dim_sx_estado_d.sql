@@ -55,6 +55,7 @@ with staged_source as (
         ID_CLIENTE,
         CD_ESTADO,
         DESC_ESTADO,
+        FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT
@@ -90,6 +91,7 @@ business_rows as (
         staged_source.ID_CLIENTE,
         staged_source.CD_ESTADO,
         upper(staged_source.DESC_ESTADO) as DESC_ESTADO,
+        staged_source.FG_ATIVO,
         staged_source.ETL_BATCH_ID,
         staged_source.BI_CREATED_AT,
         staged_source.BI_UPDATED_AT
@@ -105,6 +107,7 @@ orphan_row as (
         cast(-1 as number(38, 0)) as ID_CLIENTE,
         cast('-1' as varchar) as CD_ESTADO,
         cast('UNDEFINED' as varchar) as DESC_ESTADO,
+        cast(-1 as number(1, 0)) as FG_ATIVO,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
@@ -125,6 +128,7 @@ select
     ID_CLIENTE,
     CD_ESTADO,
     DESC_ESTADO,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT

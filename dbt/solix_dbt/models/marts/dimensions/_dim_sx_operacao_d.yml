@@ -29,6 +29,9 @@ models:
       - name: FG_TIPO_OPERACAO
       - name: CD_PROCESSO_TALHAO
       - name: DESC_PROCESSO_TALHAO
+      - name: FG_ATIVO
+        tests:
+          - not_null
       - name: ETL_BATCH_ID
         tests:
           - not_null

@@ -31,6 +31,7 @@ with source_data as (
     FG_TIPO_OPERACAO,
     CD_PROCESSO_TALHAO,
     DESC_PROCESSO_TALHAO,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT
@@ -49,6 +50,7 @@ typed_data as (
         cast(FG_TIPO_OPERACAO as varchar) as FG_TIPO_OPERACAO,
         cast(CD_PROCESSO_TALHAO as number(38, 0)) as CD_PROCESSO_TALHAO,
         cast(DESC_PROCESSO_TALHAO as varchar) as DESC_PROCESSO_TALHAO,
+        cast(FG_ATIVO as number(1, 0)) as FG_ATIVO,
         cast(ETL_BATCH_ID as varchar) as ETL_BATCH_ID,
         cast(BI_CREATED_AT as timestamp_ntz) as BI_CREATED_AT,
         cast(BI_UPDATED_AT as timestamp_ntz) as BI_UPDATED_AT
@@ -77,6 +79,7 @@ select
     FG_TIPO_OPERACAO,
     CD_PROCESSO_TALHAO,
     DESC_PROCESSO_TALHAO,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT

@@ -9,6 +9,7 @@ create table if not exists SOLIX_BI.DS.SX_OPERACAO_D (
     FG_TIPO_OPERACAO varchar,
     CD_PROCESSO_TALHAO number(38, 0),
     DESC_PROCESSO_TALHAO varchar,
+    FG_ATIVO number(1, 0) not null default 1,
     ETL_BATCH_ID varchar,
     BI_CREATED_AT timestamp_ntz,
     BI_UPDATED_AT timestamp_ntz,

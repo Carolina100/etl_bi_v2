@@ -28,6 +28,9 @@ models:
       - name: DESC_TIPO_EQUIPAMENTO
       - name: DESC_STATUS
       - name: TP_USO_EQUIPAMENTO
+      - name: FG_ATIVO
+        tests:
+          - not_null
       - name: ETL_BATCH_ID
         tests:
           - not_null

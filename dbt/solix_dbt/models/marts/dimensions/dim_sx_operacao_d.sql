@@ -62,6 +62,7 @@ with staged_source as (
         FG_TIPO_OPERACAO,
         CD_PROCESSO_TALHAO,
         DESC_PROCESSO_TALHAO,
+        FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT
@@ -104,6 +105,7 @@ business_rows as (
         staged_source.FG_TIPO_OPERACAO,
         staged_source.CD_PROCESSO_TALHAO,
         upper(staged_source.DESC_PROCESSO_TALHAO) as DESC_PROCESSO_TALHAO,
+        staged_source.FG_ATIVO,
         staged_source.ETL_BATCH_ID,
         staged_source.BI_CREATED_AT,
         staged_source.BI_UPDATED_AT
@@ -126,6 +128,7 @@ orphan_row as (
         cast('-1' as varchar) as FG_TIPO_OPERACAO,
         cast(-1 as number(38, 0)) as CD_PROCESSO_TALHAO,
         cast('UNDEFINED' as varchar) as DESC_PROCESSO_TALHAO,    
+        cast(-1 as number(1, 0)) as FG_ATIVO,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
@@ -153,6 +156,7 @@ select
     FG_TIPO_OPERACAO,
     CD_PROCESSO_TALHAO,
     DESC_PROCESSO_TALHAO,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT

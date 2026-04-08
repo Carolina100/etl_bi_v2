@@ -29,6 +29,7 @@ with source_data as (
         CD_ZONA,
         AREA_TOTAL,
         DESC_PRODUTOR,
+        FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT
@@ -45,6 +46,7 @@ typed_data as (
         cast(CD_ZONA as varchar) as CD_ZONA,
         cast(AREA_TOTAL as number(38, 8)) as AREA_TOTAL,
         cast(DESC_PRODUTOR as varchar) as DESC_PRODUTOR,
+        cast(FG_ATIVO as number(1, 0)) as FG_ATIVO,
         cast(ETL_BATCH_ID as varchar) as ETL_BATCH_ID,
         cast(BI_CREATED_AT as timestamp_ntz) as BI_CREATED_AT,
         cast(BI_UPDATED_AT as timestamp_ntz) as BI_UPDATED_AT
@@ -70,6 +72,7 @@ select
     CD_ZONA,
     AREA_TOTAL,
     DESC_PRODUTOR,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT

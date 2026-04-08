@@ -33,6 +33,9 @@ models:
       - name: DESC_UNIDADE
       - name: DESC_FRENTE
       - name: FG_FRENTE_TRABALHO
+      - name: FG_ATIVO
+        tests:
+          - not_null
       - name: ETL_BATCH_ID
         tests:
           - not_null

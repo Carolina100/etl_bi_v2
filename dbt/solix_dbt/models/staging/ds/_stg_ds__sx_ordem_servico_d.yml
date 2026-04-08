@@ -40,6 +40,9 @@ models:
       - name: FG_STATUS
       - name: VL_ORDEM_SERVICO
       - name: TICKET_NUMBER
+      - name: FG_ATIVO
+        tests:
+          - not_null
       - name: ETL_BATCH_ID
         tests:
           - not_null

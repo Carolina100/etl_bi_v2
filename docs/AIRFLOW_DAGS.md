@@ -29,6 +29,12 @@ Todas seguem a mesma lógica:
 7. executam o dbt uma única vez no final
 8. registram auditoria do DW
 
+Nas DAGs das dimensões, o mesmo fluxo também suporta um terceiro modo:
+
+- `FULL_RECONCILIATION`
+
+Esse modo faz a reconciliação completa da dimensão na fonte e marca como inativos no `DS` os registros ausentes para cada cliente.
+
 ## Explicando cada etapa
 
 ### 1. `validate_and_prepare_params`
@@ -41,11 +47,15 @@ Esta task:
   - `id_clientes`
   - `data_inicio`
   - `data_fim`
+  - `full_reconciliation`
 - identifica o modo de carga:
   - `INCREMENTAL_WATERMARK`
   - `MANUAL_BACKFILL`
+  - `FULL_RECONCILIATION`
 
 Se nenhuma data for informada, o padrão é incremental.
+
+Se `full_reconciliation=true`, a pipeline faz uma foto completa da dimensão na fonte para o cliente e marca no `DS` como inativos os registros que não aparecerem mais nessa foto.
 
 ### 2. `resolve_clientes`
 
@@ -97,6 +107,7 @@ O que ela faz por cliente:
 - gera CSV temporário
 - envia para o stage do Snowflake
 - aplica `MERGE` na tabela DS
+- quando `full_reconciliation=true`, inativa no `DS` os registros ausentes na fonte para o cliente
 - atualiza watermark
 - registra auditoria
 
@@ -149,6 +160,25 @@ O DW roda:
 O DW não roda:
 
 - se todos os clientes falharem no DS
+
+## Incremental x Full nas dimensões
+
+Para as dimensões, hoje existem três trilhos operacionais:
+
+- `INCREMENTAL_WATERMARK`
+  - uso frequente no dia a dia
+  - processa só o delta por `UPDATED_ON`
+- `MANUAL_BACKFILL`
+  - reprocessamento controlado por período
+- `FULL_RECONCILIATION`
+  - foto completa da dimensão para o cliente
+  - usada para consistência com a fonte
+  - trata registros removidos da origem marcando `FG_ATIVO = 0` no `DS`
+
+Na prática, a recomendação operacional é:
+
+- incremental várias vezes ao dia
+- full reconciliation uma vez ao dia
 
 ## Por que o DW roda só uma vez no final
 
@@ -225,6 +255,15 @@ Você pode executar manualmente de duas formas.
   "id_cliente": 7,
   "data_inicio": "2026-01-01",
   "data_fim": "2026-01-31"
+}
+```
+
+### Reconciliação full
+
+```json
+{
+  "id_cliente": 7,
+  "full_reconciliation": true
 }
 ```
 

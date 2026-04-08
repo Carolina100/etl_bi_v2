@@ -60,6 +60,7 @@ with staged_source as (
         CD_ZONA,
         AREA_TOTAL,
         DESC_PRODUTOR,
+        FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT
@@ -104,6 +105,7 @@ business_rows as (
         staged_source.CD_ZONA,
         staged_source.AREA_TOTAL,
         upper(staged_source.DESC_PRODUTOR) as DESC_PRODUTOR,
+        staged_source.FG_ATIVO,
         staged_source.ETL_BATCH_ID,
         staged_source.BI_CREATED_AT,
         staged_source.BI_UPDATED_AT
@@ -126,6 +128,7 @@ orphan_row as (
         cast('-1' as varchar) as CD_ZONA,
         cast(-1 as number(38, 8)) as AREA_TOTAL,
         cast('UNDEFINED' as varchar) as DESC_PRODUTOR,
+        cast(-1 as number(1, 0)) as FG_ATIVO,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
@@ -151,6 +154,7 @@ select
     CD_ZONA,
     AREA_TOTAL,
     DESC_PRODUTOR,
+    FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT
