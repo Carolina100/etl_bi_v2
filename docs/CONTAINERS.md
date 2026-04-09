@@ -12,7 +12,7 @@ Deixar a execucao local mais proxima do desenho de producao, separando:
 
 Arquivo principal:
 
-- [docker-compose.local.yml](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/docker-compose.local.yml)
+- [docker-compose.local.yml](../docker-compose.local.yml)
 
 Servicos:
 
@@ -26,13 +26,13 @@ Servicos:
 
 ## Imagens
 
-- [infra/airflow/Dockerfile](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/infra/airflow/Dockerfile)
+- [infra/airflow/Dockerfile](../infra/airflow/Dockerfile)
   Base do Airflow para webserver, scheduler e triggerer.
 
-- [infra/runtime/python/Dockerfile](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/infra/runtime/python/Dockerfile)
+- [infra/runtime/python/Dockerfile](../infra/runtime/python/Dockerfile)
   Worker com dependencias de DS: Oracle, pandas e Snowflake connector.
 
-- [infra/runtime/dbt/Dockerfile](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/infra/runtime/dbt/Dockerfile)
+- [infra/runtime/dbt/Dockerfile](../infra/runtime/dbt/Dockerfile)
   Worker com dependencias de DW: dbt-snowflake e Snowflake connector.
 
 ## Como as tasks sao roteadas
@@ -66,13 +66,13 @@ Para evitar trocar caminhos manualmente entre Windows e Docker:
 
 Arquivos de exemplo:
 
-- [/.env.local.example](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/.env.local.example)
-- [/.env.docker.example](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/.env.docker.example)
+- [.env.local.example](../.env.local.example)
+- [.env.docker.example](../.env.docker.example)
 
 Scripts de apoio:
 
-- [switch_env_local.ps1](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/scripts/switch_env_local.ps1)
-- [switch_env_docker.ps1](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/scripts/switch_env_docker.ps1)
+- [switch_env_local.ps1](../scripts/switch_env_local.ps1)
+- [switch_env_docker.ps1](../scripts/switch_env_docker.ps1)
 
 Uso recomendado:
 

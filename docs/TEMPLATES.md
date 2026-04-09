@@ -11,15 +11,15 @@ Este projeto passou a adotar um modelo simples:
 Para criar uma nova entidade no fluxo `Oracle -> DS -> DW`, use estes arquivos como base:
 
 1. Pipeline DS
-   - [load_sx_estado_d.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/src/pipelines/load_sx_estado_d.py)
+   - [load_sx_estado_d.py](../src/pipelines/load_sx_estado_d.py)
 2. DAG Airflow
-   - [load_sx_estado_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_estado_d_dag.py)
+   - [load_sx_estado_d_dag.py](../dags/load_sx_estado_d_dag.py)
 3. Staging dbt
-   - [stg_ds__sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/staging/ds/stg_ds__sx_estado_d.sql)
+   - [stg_ds__sx_estado_d.sql](../dbt/solix_dbt/models/staging/ds/stg_ds__sx_estado_d.sql)
 4. Dimensão dbt
-   - [dim_sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/marts/dimensions/dim_sx_estado_d.sql)
+   - [dim_sx_estado_d.sql](../dbt/solix_dbt/models/marts/dimensions/dim_sx_estado_d.sql)
 5. Regras incrementais
-   - [INCREMENTAL_LOADING.md](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/docs/INCREMENTAL_LOADING.md)
+   - [INCREMENTAL_LOADING.md](INCREMENTAL_LOADING.md)
 
 ## Ordem recomendada
 
@@ -36,7 +36,7 @@ Para criar uma nova entidade no fluxo `Oracle -> DS -> DW`, use estes arquivos c
 
 ## O que trocar na pipeline DS
 
-Ao copiar [load_sx_estado_d.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/src/pipelines/load_sx_estado_d.py), troque:
+Ao copiar [load_sx_estado_d.py](../src/pipelines/load_sx_estado_d.py), troque:
 
 - `PIPELINE_NAME`
 - `OUTPUT_FOLDER_NAME`
@@ -56,7 +56,7 @@ Mantenha o padrão atual:
 
 ## O que trocar na DAG
 
-Ao copiar [load_sx_estado_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_estado_d_dag.py), troque:
+Ao copiar [load_sx_estado_d_dag.py](../dags/load_sx_estado_d_dag.py), troque:
 
 - `DAG_ID`
 - `PIPELINE_DESCRIPTION`
@@ -76,7 +76,7 @@ Mantenha o padrão atual:
 
 ## O que trocar no staging dbt
 
-Ao copiar [stg_ds__sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/staging/ds/stg_ds__sx_estado_d.sql), troque:
+Ao copiar [stg_ds__sx_estado_d.sql](../dbt/solix_dbt/models/staging/ds/stg_ds__sx_estado_d.sql), troque:
 
 - nome do source
 - colunas da tabela DS
@@ -91,7 +91,7 @@ Mantenha o padrão atual:
 
 ## O que trocar na dimensão DW
 
-Ao copiar [dim_sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/models/marts/dimensions/dim_sx_estado_d.sql), troque:
+Ao copiar [dim_sx_estado_d.sql](../dbt/solix_dbt/models/marts/dimensions/dim_sx_estado_d.sql), troque:
 
 - alias da tabela
 - sequence
@@ -115,7 +115,7 @@ Ao copiar [dim_sx_estado_d.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/db
 - a role de ingestão tem permissão na tabela DS e na `CTL_PIPELINE_WATERMARK`
 - a coluna de atualização da origem foi validada
 - a sequence do DW existe
-- `dbt deps` foi executado após adicionar ou atualizar pacotes em [packages.yml](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dbt/solix_dbt/packages.yml)
+- `dbt deps` foi executado após adicionar ou atualizar pacotes em [packages.yml](../dbt/solix_dbt/packages.yml)
 - source/staging/dimensão do dbt foram criados
 - a DAG foi ajustada para os nomes corretos
 - o fluxo DS rodou sozinho antes do teste completo no Airflow

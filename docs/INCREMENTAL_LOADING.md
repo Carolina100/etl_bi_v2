@@ -156,7 +156,7 @@ create table if not exists SOLIX_BI.DS.CTL_PIPELINE_WATERMARK (
 
 Script no repositório:
 
-- [create_ctl_pipeline_watermark.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/sql/control/create_ctl_pipeline_watermark.sql)
+- [create_ctl_pipeline_watermark.sql](../sql/control/create_ctl_pipeline_watermark.sql)
 
 Se a tabela `SOLIX_BI.DS.SX_ESTADO_D` ja existir, ela precisa conter tambem:
 
@@ -169,7 +169,7 @@ alter table SOLIX_BI.DS.SX_ESTADO_D drop column if exists ETL_LOADED_AT;
 
 Para as demais dimensões do projeto, existe o script:
 
-- [alter_ds_dimensions_add_fg_ativo.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/sql/ds/alter_ds_dimensions_add_fg_ativo.sql)
+- [alter_ds_dimensions_add_fg_ativo.sql](../sql/ds/alter_ds_dimensions_add_fg_ativo.sql)
 
 ## Como a janela é resolvida
 

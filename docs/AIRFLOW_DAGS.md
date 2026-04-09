@@ -16,11 +16,11 @@ Para a fato `SX_DETALHES_OPERACAO_F`, a origem segue um trilho proprio:
 
 Hoje existem estas DAGs:
 
-- [load_sx_estado_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_estado_d_dag.py)
-- [load_sx_operacao_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_operacao_d_dag.py)
-- [load_sx_fazenda_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_fazenda_d_dag.py)
-- [load_sx_equipamento_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_equipamento_d_dag.py)
-- [load_sx_detalhes_operacao_f_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_detalhes_operacao_f_dag.py)
+- [load_sx_estado_d_dag.py](../dags/load_sx_estado_d_dag.py)
+- [load_sx_operacao_d_dag.py](../dags/load_sx_operacao_d_dag.py)
+- [load_sx_fazenda_d_dag.py](../dags/load_sx_fazenda_d_dag.py)
+- [load_sx_equipamento_d_dag.py](../dags/load_sx_equipamento_d_dag.py)
+- [load_sx_detalhes_operacao_f_dag.py](../dags/load_sx_detalhes_operacao_f_dag.py)
 
 ## O que todas as DAGs fazem
 
