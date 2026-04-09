@@ -92,7 +92,7 @@ class SnowflakeLoader:
                 update_assignments.append(
                     "t."
                     + column
-                    + " = CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+                    + " = CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
                 )
             else:
                 update_assignments.append(f"t.{column} = s.{column}")
@@ -137,7 +137,7 @@ class SnowflakeLoader:
                 inactive_assignments.append(
                     "t."
                     + column
-                    + " = CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+                    + " = CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
                 )
 
             inactive_set = ",\n                    ".join(inactive_assignments)

@@ -1,7 +1,7 @@
 from src.load.snowflake_loader import SnowflakeLoader
 
 class AuditRepository:
-    BRAZIL_NOW_SQL = "CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+    BRAZIL_NOW_SQL = "CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
 
     def __init__(self, loader: SnowflakeLoader) -> None:
         self.loader = loader

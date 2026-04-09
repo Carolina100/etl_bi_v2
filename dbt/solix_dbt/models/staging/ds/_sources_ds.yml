@@ -24,3 +24,6 @@ sources:
       - name: sx_ordem_servico_d
         identifier: SX_ORDEM_SERVICO_D
         description: "Tabela DS da entidade SX_ORDEM_SERVICO_D."
+      - name: sx_detalhes_operacao_f
+        identifier: SX_DETALHES_OPERACAO_F
+        description: "Tabela DS da entidade SX_DETALHES_OPERACAO_F."

@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
   "pandas==2.2.3",
   "python-dotenv==1.0.1",
+  "psycopg[binary]==3.2.3",
   "oracledb==2.2.1",
   "snowflake-connector-python[pandas]==3.12.2",
 ]
@@ -28,4 +29,3 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["src*"]
-

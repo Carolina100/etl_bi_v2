@@ -4,6 +4,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings:
+    POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+    POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
+    POSTGRES_DATABASE = os.getenv("POSTGRES_DATABASE")
+    POSTGRES_USER = os.getenv("POSTGRES_USER")
+    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+    POSTGRES_SCHEMA = os.getenv("POSTGRES_SCHEMA", "public")
+
     ORACLE_DRIVER_MODE = os.getenv("ORACLE_DRIVER_MODE", "auto").strip().lower()
     ORACLE_HOST = os.getenv("ORACLE_HOST")
     ORACLE_PORT = int(os.getenv("ORACLE_PORT", "1521"))

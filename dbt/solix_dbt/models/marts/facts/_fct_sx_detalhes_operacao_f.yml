@@ -1,0 +1,56 @@
+version: 2
+
+models:
+  - name: fct_sx_detalhes_operacao_f
+    description: "Fato DW de detalhes de operacao alimentada a partir do DS."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+              - DT_DIA_FECHAMENTO
+              - DATA
+              - HORA
+              - SK_EQUIPAMENTO
+              - SK_OPERACAO
+              - SK_FAZENDA
+              - SK_ESTADO
+              - SK_ORDEM_SERVICO
+              - SK_FRENTE
+              - SK_PROCESSO
+              - CD_MISSAO
+    columns:
+      - name: ID_CLIENTE
+        tests: [not_null]
+      - name: DT_DIA_FECHAMENTO
+        tests: [not_null]
+      - name: DATA
+        tests: [not_null]
+      - name: HORA
+        tests: [not_null]
+      - name: SK_EQUIPAMENTO
+        tests: [not_null]
+      - name: SK_OPERACAO
+        tests: [not_null]
+      - name: SK_FAZENDA
+        tests: [not_null]
+      - name: SK_ESTADO
+        tests: [not_null]
+      - name: SK_ORDEM_SERVICO
+        tests: [not_null]
+      - name: SK_FRENTE
+        tests: [not_null]
+      - name: SK_PROCESSO
+        tests: [not_null]
+      - name: CD_MISSAO
+        tests: [not_null]
+      - name: VL_TEMPO_SEGUNDOS
+      - name: VL_VELOCIDADE_MEDIA
+      - name: VL_AREA_OPERACIONAL_M2
+      - name: FG_STATUS
+      - name: ETL_BATCH_ID
+        tests: [not_null]
+      - name: BI_CREATED_AT
+        tests: [not_null]
+      - name: BI_UPDATED_AT
+        tests: [not_null]

@@ -9,12 +9,18 @@ Cada DAG representa o fluxo completo de uma entidade no caminho:
 - Oracle -> Python -> Snowflake DS
 - Snowflake DS -> dbt -> Snowflake DW
 
+Para a fato `SX_DETALHES_OPERACAO_F`, a origem segue um trilho proprio:
+
+- PostgreSQL -> Python -> Snowflake DS
+- Snowflake DS -> dbt -> Snowflake DW
+
 Hoje existem estas DAGs:
 
 - [load_sx_estado_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_estado_d_dag.py)
 - [load_sx_operacao_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_operacao_d_dag.py)
 - [load_sx_fazenda_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_fazenda_d_dag.py)
 - [load_sx_equipamento_d_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_equipamento_d_dag.py)
+- [load_sx_detalhes_operacao_f_dag.py](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi/dags/load_sx_detalhes_operacao_f_dag.py)
 
 ## O que todas as DAGs fazem
 
@@ -34,6 +40,13 @@ Nas DAGs das dimensões, o mesmo fluxo também suporta um terceiro modo:
 - `FULL_RECONCILIATION`
 
 Esse modo faz a reconciliação completa da dimensão na fonte e marca como inativos no `DS` os registros ausentes para cada cliente.
+
+Observacao de semantica:
+
+- nas dimensoes, a reconciliacao usa `FG_ATIVO = 1/0`
+- na fato `SX_DETALHES_OPERACAO_F`, o estado vindo da fonte e persistido em `FG_STATUS = A/I`
+
+Essa diferenca e intencional e esta detalhada na documentacao de carga incremental.
 
 ## Explicando cada etapa
 

@@ -47,7 +47,7 @@ class WatermarkRepository:
                 LAST_RUN_BATCH_ID = source.LAST_RUN_BATCH_ID,
                 LAST_RUN_STARTED_AT = source.LAST_RUN_STARTED_AT,
                 LAST_RUN_COMMITTED_AT = NULL,
-                UPDATED_AT = CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ
+                UPDATED_AT = CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ
         WHEN NOT MATCHED THEN
             INSERT (
                 PIPELINE_NAME,
@@ -63,7 +63,7 @@ class WatermarkRepository:
                 source.LAST_RUN_BATCH_ID,
                 source.LAST_RUN_STARTED_AT,
                 NULL,
-                CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ
+                CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ
             )
         """
         self.loader.execute(sql)
@@ -110,7 +110,7 @@ class WatermarkRepository:
                 LAST_EXTRACT_ENDED_AT = source.LAST_EXTRACT_ENDED_AT,
                 LAST_RUN_BATCH_ID = source.LAST_RUN_BATCH_ID,
                 LAST_RUN_COMMITTED_AT = source.LAST_RUN_COMMITTED_AT,
-                UPDATED_AT = CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ
+                UPDATED_AT = CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ
         WHEN NOT MATCHED THEN
             INSERT (
                 PIPELINE_NAME,
@@ -136,7 +136,7 @@ class WatermarkRepository:
                 source.LAST_RUN_BATCH_ID,
                 source.LAST_EXTRACT_STARTED_AT,
                 source.LAST_RUN_COMMITTED_AT,
-                CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ
+                CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ
             )
         """
         self.loader.execute(sql)

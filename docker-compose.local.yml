@@ -11,7 +11,7 @@ x-airflow-env: &airflow-env
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/project/dags
-    AIRFLOW__CORE__DEFAULT_TIMEZONE: America/Sao_Paulo
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: UTC
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     AIRFLOW_PROJECT_ROOT: /opt/airflow/project
     PYTHONPATH: /opt/airflow/project

@@ -68,8 +68,8 @@ with staged_source as (
         BI_UPDATED_AT
     from {{ ref(STAGING_MODEL_NAME) }}
     {% if is_incremental() %}
-    where BI_UPDATED_AT > (
-        select coalesce(max(BI_UPDATED_AT), '1900-01-01'::timestamp_ntz)
+    where BI_UPDATED_AT >= (
+        select timestampadd(minute, -30, coalesce(max(BI_UPDATED_AT), '1900-01-01'::timestamp_ntz))
         from {{ this }}
         where {{ SURROGATE_KEY_COLUMN }} <> -1
     )
@@ -139,8 +139,8 @@ orphan_row as (
         cast(-1 as number(38, 0)) as FG_FRENTE_TRABALHO,
         cast(-1 as number(1, 0)) as FG_ATIVO,
         cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
-        convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
-        convert_timezone('America/Sao_Paulo', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
+        convert_timezone('UTC', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
+        convert_timezone('UTC', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
 ),    
 
 final as (

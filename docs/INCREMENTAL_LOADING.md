@@ -331,5 +331,67 @@ Observacao de timezone:
 - `LAST_SOURCE_UPDATED_AT` nao e convertido para horario de Brasilia
 - ele e persistido como valor fiel retornado pela origem Oracle
 - isso e importante porque esse campo dirige a logica incremental e precisa permanecer no mesmo referencial de tempo da origem
-- `UPDATED_AT` em `CTL_PIPELINE_WATERMARK` e gravado em horario de Brasilia
-- isso e feito no Snowflake com `CONVERT_TIMEZONE('America/Sao_Paulo', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ`
+- `UPDATED_AT` em `CTL_PIPELINE_WATERMARK` e gravado em horário global absoluto (UTC)
+- isso e feito no Snowflake com `CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ`
+
+## Regra da fato `SX_DETALHES_OPERACAO_F`
+
+A fato `SX_DETALHES_OPERACAO_F` segue um incremental por watermark em cima de `dt_updated` da fonte PostgreSQL.
+
+O grão da fato e definido pela chave composta das colunas nao metricas.
+O campo `FG_STATUS` nao faz parte dessa chave.
+
+Regra padronizada:
+
+- `A`
+  - registro vigente na fonte
+- `I`
+  - o mesmo grão retornou da fonte como desativado
+
+Isso significa que:
+
+- o `MERGE` no `DS` localiza o mesmo grão composto
+- e atualiza `FG_STATUS` na mesma linha
+- sem gerar nova combinacao apenas porque o status mudou
+
+Na auditoria da fato, os eventos de extracao e merge registram tambem:
+
+- quantidade de registros `A`
+- quantidade de registros `I`
+
+Objetivo:
+
+- deixar explicita a semantica do status
+- facilitar validacao operacional do comportamento do incremental
+
+## Padronizacao de status no projeto
+
+Neste momento, o projeto adota dois padrões diferentes de status, de forma intencional:
+
+- dimensoes
+  - `FG_ATIVO = 1/0`
+- fato `SX_DETALHES_OPERACAO_F`
+  - `FG_STATUS = A/I`
+
+Essa diferenca existe porque a semantica nao e exatamente a mesma.
+
+Nas dimensoes:
+
+- `FG_ATIVO = 1`
+  - o cadastro esta presente na foto reconciliada da fonte
+- `FG_ATIVO = 0`
+  - o cadastro deixou de aparecer na fonte e foi inativado pela reconciliacao full
+
+Na fato:
+
+- `FG_STATUS = A`
+  - o registro esta vigente para aquele grão
+- `FG_STATUS = I`
+  - o mesmo grão retornou da fonte como inativo
+
+Resumo:
+
+- dimensao usa um indicador tecnico de atividade no cadastro reconciliado
+- fato usa um indicador de estado do proprio evento/grão
+
+Por isso, por enquanto, mantemos a clareza semantica na documentacao e preservamos os dois formatos.

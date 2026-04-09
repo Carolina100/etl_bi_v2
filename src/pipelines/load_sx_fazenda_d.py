@@ -1,10 +1,9 @@
 import argparse
 from contextlib import closing
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import re
 import uuid
-from zoneinfo import ZoneInfo
 
 import oracledb
 import pandas as pd
@@ -19,7 +18,7 @@ from src.load.snowflake_loader import SnowflakeLoader
 
 logger = get_logger(__name__)
 _ORACLE_CLIENT_INITIALIZED = False
-BRAZIL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+UTC_TIMEZONE = timezone.utc
 
 # ============================================================================
 # CONFIGURACAO DA PIPELINE
@@ -422,7 +421,7 @@ def resolve_load_window(
         )
 
     if full_reconciliation:
-        extraction_ended_at = datetime.now(BRAZIL_TIMEZONE).replace(tzinfo=None)
+        extraction_ended_at = datetime.now(UTC_TIMEZONE).replace(tzinfo=None)
         return {
             "load_mode": LOAD_MODE_FULL,
             "manual_data_inicio": None,
@@ -456,7 +455,7 @@ def resolve_load_window(
         pipeline_name=PIPELINE_NAME,
         id_cliente=id_cliente,
     )
-    extraction_ended_at = datetime.now(BRAZIL_TIMEZONE).replace(tzinfo=None)
+    extraction_ended_at = datetime.now(UTC_TIMEZONE).replace(tzinfo=None)
     extraction_started_at = INITIAL_INCREMENTAL_START
     if last_watermark:
         extraction_started_at = last_watermark - timedelta(minutes=INCREMENTAL_LOOKBACK_MINUTES)
@@ -512,7 +511,7 @@ def run_pipeline(
     audit_loader: SnowflakeLoader | None = None
     audit_repository: AuditRepository | None = None
     watermark_repository: WatermarkRepository | None = None
-    audit_dt_inicio = datetime.now(BRAZIL_TIMEZONE).isoformat()
+    audit_dt_inicio = datetime.now(UTC_TIMEZONE).isoformat()
     audit_dt_fim = audit_dt_inicio
     resolved_load_mode = LOAD_MODE_INCREMENTAL
 
@@ -521,7 +520,7 @@ def run_pipeline(
 
         batch_id = uuid.uuid4().hex
         etl_batch_id = batch_id
-        bi_timestamp = datetime.now(BRAZIL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+        bi_timestamp = datetime.now(UTC_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
         logger.info("BATCH_ID gerado para a carga: %s.", batch_id)
         logger.info("BI timestamps gerados para a carga: %s.", bi_timestamp)
 
@@ -537,7 +536,7 @@ def run_pipeline(
             pipeline_name=PIPELINE_NAME,
             id_cliente=id_cliente,
             batch_id=batch_id,
-            run_started_at=datetime.now(BRAZIL_TIMEZONE).replace(tzinfo=None),
+            run_started_at=datetime.now(UTC_TIMEZONE).replace(tzinfo=None),
         )
 
         resolved_load_mode = str(load_window["load_mode"])
@@ -667,7 +666,7 @@ def run_pipeline(
                 load_mode=resolved_load_mode,
                 extraction_started_at=extraction_started_at,
                 extraction_ended_at=extraction_ended_at,
-                run_committed_at=datetime.now(BRAZIL_TIMEZONE).replace(tzinfo=None),
+                run_committed_at=datetime.now(UTC_TIMEZONE).replace(tzinfo=None),
             )
             logger.info(
                 "Watermark atualizado para id_cliente=%s com SOURCE_UPDATED_ON=%s.",
