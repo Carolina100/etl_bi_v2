@@ -1,36 +1,67 @@
 {#
-  MODELO OPERACIONAL DS — SX_ESTADO_D (Multi-Tenant)
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  MODELO DS — TEMPLATE MULTI-TENANT (RAW → DS com UNION ALL dinâmico)        ║
+║                                                                              ║
+║  PARA REUTILIZAR PARA OUTRA TABELA, ALTERE APENAS AS VARIAVEIS ABAIXO       ║
+║  MARCADAS COM OS NUMEROS (1), (2), (3), (4) E (5).                          ║
+║  O restante do modelo NAO precisa ser tocado.                                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-  OBJETIVO:
-  - Ler todas as tabelas de estado de clientes no schema RAW (ex: RAW.AMAGGI_CDT_ESTADO)
-  - Derivar ID_CLIENTE a partir de DS.CTL_AIRBYTE_CONEXOES via STREAM_PREFIX
-  - Deduplicar por chave natural (ID_CLIENTE, CD_ESTADO)
-  - Aplicar merge semantico na tabela final DS.SX_ESTADO_D
-  - Preservar BI_CREATED_AT e atualizar BI_UPDATED_AT apenas quando houver mudanca real
-  - Inativar registros ausentes somente na reconciliacao full
-
-  PREMISSA OPERACIONAL:
-  - A inativacao de ausentes so acontece quando sx_estado_d_reconciliation_mode='full'
-  - Numa rodada full, o conjunto de dados deve representar a foto completa da entidade
-  - Se todas as fontes RAW vierem vazias, o modelo nao inativa os registros atuais
-
-  CONVENCAO RAW:
-  - Tabelas no formato: {STREAM_PREFIX}{NOME_TABELA_POSTGRES} em maiusculas
-  - Ex: AMAGGI_ + CDT_ESTADO = AMAGGI_CDT_ESTADO
-  - STREAM_PREFIX e definido em DS.CTL_AIRBYTE_CONEXOES
-
-  AJUSTE SE NECESSARIO:
-  - A coluna de timestamp da origem e mapeada como UPDATED_ON (nome no Postgres)
-  - Se o nome for diferente, ajuste o cast de SOURCE_UPDATED_AT abaixo
-  - Para verificar: SELECT * FROM SOLIX_BI.RAW.AMAGGI_CDT_ESTADO LIMIT 1;
+  COMO FUNCIONA:
+  - O Airbyte deposita uma tabela por cliente no schema RAW com o padrao:
+      RAW.{STREAM_PREFIX}{NOME_TABELA_POSTGRES}
+      Ex: RAW.AMAGGI_CDT_ESTADO
+  - Este modelo descobre essas tabelas automaticamente via macro
+  - Faz UNION ALL de todos os clientes ativos na CTL_AIRBYTE_CONEXOES
+  - Aplica merge incremental na tabela DS correspondente
 #}
 
-{% set MODEL_ALIAS          = 'SX_ESTADO_D' %}
-{% set TARGET_SCHEMA        = 'DS' %}
-{% set NATURAL_KEY_COLUMNS  = ['ID_CLIENTE', 'CD_ESTADO'] %}
-{% set BATCH_ID             = invocation_id %}
-{% set RECONCILIATION_MODE  = var('sx_estado_d_reconciliation_mode', 'incremental') | lower %}
-{% set IS_FULL_RECONCILIATION = RECONCILIATION_MODE == 'full' %}
+{# ┌─────────────────────────────────────────────────────────────────────────┐
+   │  (1) SUFIXO DA ENTIDADE NO RAW                                          │
+   │  Parte final do nome da tabela no RAW, sem o prefixo do cliente.        │
+   │  Ex: RAW.AMAGGI_CDT_ESTADO → sufixo é 'CDT_ESTADO'                     │
+   └───────────────────────────────────────────────────────────────────────── #}
+{% set ENTITY_TABLE_SUFFIX = 'CDT_ESTADO' %}
+
+{# ┌─────────────────────────────────────────────────────────────────────────┐
+   │  (2) NOME DA TABELA DESTINO NO SCHEMA DS                                │
+   │  Nome exato da tabela que será criada/atualizada em DS.                 │
+   └───────────────────────────────────────────────────────────────────────── #}
+{% set MODEL_ALIAS = 'SX_ESTADO_D' %}
+
+{# ┌─────────────────────────────────────────────────────────────────────────┐
+   │  (3) CHAVE NATURAL — colunas que identificam unicamente um registro      │
+   │  Usadas no merge incremental (unique_key).                              │
+   └───────────────────────────────────────────────────────────────────────── #}
+{% set NATURAL_KEY_COLUMNS = ['ID_CLIENTE', 'CD_ESTADO'] %}
+
+{# ┌─────────────────────────────────────────────────────────────────────────┐
+   │  (4) NOME DA VARIAVEL dbt PARA MODO DE RECONCILIACAO                    │
+   │  Padrao: <alias_em_minusculo>_reconciliation_mode                       │
+   │  Uso: dbt run --vars '{"sx_estado_d_reconciliation_mode": "full"}'      │
+   └───────────────────────────────────────────────────────────────────────── #}
+{% set RECONCILIATION_VAR = 'sx_estado_d_reconciliation_mode' %}
+
+{# ┌─────────────────────────────────────────────────────────────────────────┐
+   │  (5) COLUNAS LIDAS DO RAW — mude os casts e nomes conforme a entidade   │
+   │                                                                         │
+   │  REGRA: a coluna SOURCE_UPDATED_AT deve apontar para o campo de         │
+   │  data de atualizacao da tabela no Postgres (geralmente updated_on,      │
+   │  updated_at, dt_atualizacao, etc.)                                      │
+   │                                                                         │
+   │  Para descobrir as colunas disponíveis no RAW, execute:                 │
+   │  SELECT * FROM SOLIX_BI.RAW.AMAGGI_CDT_ESTADO LIMIT 1;                 │
+   └───────────────────────────────────────────────────────────────────────── #}
+{# (5) As colunas sao usadas no bloco staged_airbyte mais abaixo #}
+
+{# ══════════════════════════════════════════════════════════════════════════ #}
+{# DAQUI PARA BAIXO NAO E NECESSARIO ALTERAR — LOGICA GENERICA DO TEMPLATE  #}
+{# ══════════════════════════════════════════════════════════════════════════ #}
+
+{% set TARGET_SCHEMA            = 'DS' %}
+{% set BATCH_ID                 = invocation_id %}
+{% set RECONCILIATION_MODE      = var(RECONCILIATION_VAR, 'incremental') | lower %}
+{% set IS_FULL_RECONCILIATION   = RECONCILIATION_MODE == 'full' %}
 
 {{ config(
     materialized='incremental',
@@ -39,18 +70,12 @@
     incremental_strategy='merge',
     unique_key=NATURAL_KEY_COLUMNS,
     on_schema_change='sync_all_columns',
-    tags=['ds', 'incremental', 'sx_estado_d']
+    tags=['ds', 'incremental', MODEL_ALIAS | lower]
 ) }}
-
-{# ── Descoberta dinamica de tabelas de clientes no RAW ──────────────────────
-   A macro consulta INFORMATION_SCHEMA.TABLES filtrando por sufixo da entidade
-   e faz join com CTL_AIRBYTE_CONEXOES via STREAM_PREFIX para obter ID_CLIENTE.
-   Resultado: lista de (TABLE_NAME, ID_CLIENTE) para clientes ativos.
-────────────────────────────────────────────────────────────────────────────── #}
 
 {% if execute %}
     {% set client_tables_sql %}
-        {{ discover_raw_client_tables('CDT_ESTADO') }}
+        {{ discover_raw_client_tables(ENTITY_TABLE_SUFFIX) }}
     {% endset %}
     {% set client_tables = run_query(client_tables_sql) %}
     {% set table_rows = client_tables.rows %}
@@ -62,7 +87,6 @@ with staged_airbyte as (
 
 {% if table_rows | length == 0 %}
 
-    {# Fallback: nenhuma tabela de cliente encontrada no RAW — retorna conjunto vazio #}
     select
         cast(null as number(38, 0))  as ID_CLIENTE,
         cast(null as varchar)         as CD_ESTADO,
@@ -73,17 +97,18 @@ with staged_airbyte as (
 
 {% else %}
 
-    {# UNION ALL dinamico: uma branch por cliente ativo encontrado no RAW #}
     {% for row in table_rows %}
     {% set raw_table_name = row[0] %}
     {% set id_cliente      = row[1] %}
 
     select
-        cast({{ id_cliente }}               as number(38, 0))  as ID_CLIENTE,
-        cast(CD_ESTADO                     as varchar)          as CD_ESTADO,
-        cast(DESC_ESTADO                   as varchar)          as DESC_ESTADO,
-        cast(UPDATED_ON                    as timestamp_ntz)    as SOURCE_UPDATED_AT,
-        cast(_airbyte_extracted_at         as timestamp_ntz)    as _airbyte_extracted_at
+        {# ── (5) AJUSTE AS COLUNAS ABAIXO CONFORME A ENTIDADE ─────────────── #}
+        cast({{ id_cliente }}        as number(38, 0))  as ID_CLIENTE,
+        cast(CD_ESTADO               as varchar)         as CD_ESTADO,
+        cast(DESC_ESTADO             as varchar)         as DESC_ESTADO,
+        cast(UPDATED_ON              as timestamp_ntz)   as SOURCE_UPDATED_AT,
+        {# ── FIM DO BLOCO DE COLUNAS ──────────────────────────────────────── #}
+        cast(_airbyte_extracted_at   as timestamp_ntz)   as _airbyte_extracted_at
     from SOLIX_BI.RAW.{{ raw_table_name }}
 
     {% if not loop.last %} union all {% endif %}
