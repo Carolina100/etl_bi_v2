@@ -25,6 +25,8 @@ x-airflow-common: &airflow-common
   volumes:
     - .:/opt/airflow/project
     - airflow_logs:/opt/airflow/logs
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   depends_on:
     postgres:
       condition: service_healthy
@@ -61,7 +63,8 @@ services:
       dockerfile: infra/airflow/Dockerfile
     command: >
       bash -c "
-      airflow db migrate
+      airflow db migrate &&
+      airflow connections add 'airbyte_default' --conn-type 'airbyte' --conn-host 'http://host.docker.internal' --conn-port '8000' || true
       "
     restart: "no"
 
@@ -107,21 +110,7 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
-  airflow-worker-ds:
-    <<: *airflow-common
-    build:
-      context: .
-      dockerfile: infra/runtime/python/Dockerfile
-    command: airflow celery worker -q ds
-    environment:
-      <<: *airflow-env
-      ORACLE_CLIENT_LIB_DIR: /opt/oracle/instantclient_23_26
-      SNOWFLAKE_PRIVATE_KEY_PATH: /opt/airflow/project/secrets/snowflake/ETL_KEYPAIR.p8
-    depends_on:
-      airflow-apiserver:
-        condition: service_started
-      airflow-init:
-        condition: service_completed_successfully
+
 
   airflow-worker-dbt:
     <<: *airflow-common

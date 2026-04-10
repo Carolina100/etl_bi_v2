@@ -62,7 +62,7 @@ with staged_source as (
     from {{ ref(STAGING_MODEL_NAME) }}
     {% if is_incremental() %}
     where BI_UPDATED_AT >= (
-        select timestampadd(minute, -30, coalesce(max(BI_UPDATED_AT), '1900-01-01'::timestamp_ntz))
+        select timestampadd(minute, -5, coalesce(max(BI_UPDATED_AT), '1900-01-01'::timestamp_ntz))
         from {{ this }}
         where {{ SURROGATE_KEY_COLUMN }} <> -1
     )

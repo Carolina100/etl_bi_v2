@@ -1,2 +1,0 @@
-# Pipelines da camada DS.
-

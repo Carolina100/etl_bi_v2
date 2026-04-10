@@ -1,2 +1,0 @@
-# Extratores de origem.
-

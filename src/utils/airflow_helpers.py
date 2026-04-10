@@ -20,66 +20,12 @@ def ensure_env_var(name: str) -> str:
     return value
 
 
-def normalize_client_conf(
-    raw_conf: dict[str, Any],
-    *,
-    allow_missing_client: bool = False,
-) -> dict[str, Any]:
-    id_clientes = raw_conf.get("id_clientes")
-    id_cliente = raw_conf.get("id_cliente")
-
-    if id_clientes and id_cliente:
-        raise AirflowFailException(
-            "Informe apenas um entre 'id_cliente' ou 'id_clientes'."
-        )
-
-    if id_clientes:
-        if not isinstance(id_clientes, list) or not id_clientes:
-            raise AirflowFailException("'id_clientes' deve ser uma lista nao vazia.")
-        normalized_ids = [int(item) for item in id_clientes]
-    elif id_cliente is not None:
-        normalized_ids = [int(id_cliente)]
-    else:
-        if allow_missing_client:
-            normalized_ids = []
-        else:
-            raise AirflowFailException(
-                "Informe 'id_cliente' ou 'id_clientes' no dag_run.conf."
-            )
-
-    data_inicio = raw_conf.get("data_inicio")
-    data_fim = raw_conf.get("data_fim")
-    full_reconciliation = bool(raw_conf.get("full_reconciliation") or False)
-    manual_window_informed = data_inicio is not None or data_fim is not None
-    if manual_window_informed and not (data_inicio and data_fim):
-        raise AirflowFailException(
-            "Informe 'data_inicio' e 'data_fim' juntos para backfill manual."
-        )
-    if manual_window_informed and full_reconciliation:
-        raise AirflowFailException(
-            "Use ou 'data_inicio'/'data_fim' para backfill manual, ou 'full_reconciliation=true'."
-        )
-
-    load_mode = "INCREMENTAL_WATERMARK"
-    if full_reconciliation:
-        load_mode = "FULL_RECONCILIATION"
-    elif manual_window_informed:
-        load_mode = "MANUAL_BACKFILL"
-
-    return {
-        "id_clientes": normalized_ids,
-        "data_inicio": str(data_inicio) if data_inicio else None,
-        "data_fim": str(data_fim) if data_fim else None,
-        "full_reconciliation": full_reconciliation,
-        "load_mode": load_mode,
-    }
-
-
 def run_dbt_command(
     *,
     dbt_project_dir: str,
     dbt_profiles_dir: str,
     select_models: list[str],
+    dbt_vars: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ensure_env_var("SNOWFLAKE_ACCOUNT")
     ensure_env_var("SNOWFLAKE_USER")
@@ -91,6 +37,8 @@ def run_dbt_command(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     command = ["dbt", "build", "--no-partial-parse", "--select", *select_models]
+    if dbt_vars:
+        command.extend(["--vars", json.dumps(dbt_vars)])
     env = os.environ.copy()
     env["DBT_PROFILES_DIR"] = dbt_profiles_dir
     env["DBT_TARGET_PATH"] = str(target_dir)

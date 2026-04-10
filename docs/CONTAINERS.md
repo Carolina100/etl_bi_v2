@@ -5,12 +5,12 @@
 Deixar a execucao local mais proxima do desenho de producao, separando:
 
 - orquestracao Airflow
-- runtime Python/DS
+- ingestão via Airbyte
 - runtime dbt/DW
 
 ## Desenho atual da stack local
 
-Arquivo principal:
+Arquivo principal do projeto:
 
 - [docker-compose.local.yml](../docker-compose.local.yml)
 
@@ -18,19 +18,21 @@ Servicos:
 
 - `postgres`: metadados do Airflow
 - `redis`: broker do Celery
-- `airflow-webserver`: interface e API do Airflow
+- `airflow-apiserver`: interface e API do Airflow
 - `airflow-scheduler`: scheduler da DAG
 - `airflow-triggerer`: triggerer
-- `airflow-worker-ds`: worker dedicado a tasks da fila `ds`
 - `airflow-worker-dbt`: worker dedicado a tasks da fila `dbt`
+
+Servico externo esperado no ambiente local:
+
+- Airbyte rodando localmente via `abctl`
+- UI disponivel em `http://localhost:8000`
+- API acessivel para o Airflow por `http://host.docker.internal:8000`
 
 ## Imagens
 
 - [infra/airflow/Dockerfile](../infra/airflow/Dockerfile)
   Base do Airflow para webserver, scheduler e triggerer.
-
-- [infra/runtime/python/Dockerfile](../infra/runtime/python/Dockerfile)
-  Worker com dependencias de DS: Oracle, pandas e Snowflake connector.
 
 - [infra/runtime/dbt/Dockerfile](../infra/runtime/dbt/Dockerfile)
   Worker com dependencias de DW: dbt-snowflake e Snowflake connector.
@@ -39,8 +41,7 @@ Servicos:
 
 Na DAG, as tasks usam filas:
 
-- `ds` para a camada Python/DS
-- `dbt` para a camada DW/dbt
+- `dbt` para orquestracao da sync Airbyte via API e execucao da camada DW/dbt
 
 Isso permite que cada worker carregue apenas o que precisa.
 
@@ -88,6 +89,17 @@ Exemplo:
 - Docker local:
   `. .\scripts\switch_env_docker.ps1`
 
+## Como subir
+
+Airflow e dbt:
+
+- `docker compose -f docker-compose.local.yml up --build -d`
+
+Dependencia externa:
+
+- subir primeiro o Airbyte via `abctl`
+- depois subir Airflow e dbt
+
 ## Nivel de producao
 
 Esta stack fica mais proxima de producao do que o desenho anterior, porque:
@@ -99,6 +111,7 @@ Esta stack fica mais proxima de producao do que o desenho anterior, porque:
 Ainda assim, para producao real, o caminho mais comum e:
 
 - Airflow em Kubernetes ou servico gerenciado
+- Airbyte gerenciado ou Airbyte em Kubernetes com persistencia dedicada
 - imagens publicadas em registry
 - secrets via secret manager ou volumes protegidos
 - pipelines promovidas entre dev, hml e prd

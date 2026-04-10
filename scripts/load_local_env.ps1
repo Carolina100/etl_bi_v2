@@ -10,13 +10,13 @@
 # IMPORTANTE:
 # - Este script e apenas para ambiente LOCAL
 # - Ele existe porque o dbt nao le o arquivo .env automaticamente
-# - As pipelines Python ja leem o .env via python-dotenv
+# - Este script existe principalmente para dbt e ferramentas locais
 #
 # EM PRODUCAO:
 # - NAO use este script
 # - NAO dependa de arquivo .env
 # - Use variaveis de ambiente injetadas por Kubernetes / Airflow / secret manager
-# - Quando o projeto for para producao, este script pode ser ignorado
+# - Quando o projeto estiver rodando orquestrado, este script pode ser ignorado
 # ============================================================================
 
 $envFile = Join-Path $PSScriptRoot "..\.env"
@@ -43,4 +43,4 @@ $dbtProfilesDir = [System.IO.Path]::GetFullPath($dbtProfilesDir)
 Write-Host ""
 Write-Host "Variaveis do .env carregadas na sessao atual do PowerShell."
 Write-Host "DBT_PROFILES_DIR configurado para: $dbtProfilesDir"
-Write-Host "Agora voce pode rodar Python ou dbt nesta mesma janela."
+Write-Host "Agora voce pode rodar dbt ou comandos locais nesta mesma janela."

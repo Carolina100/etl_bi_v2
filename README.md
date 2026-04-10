@@ -2,9 +2,9 @@
 
 Projeto de ingestao e transformacao de dados com o fluxo:
 
-- Oracle -> Python -> Snowflake DS
+- Oracle / PostgreSQL -> Airbyte -> Snowflake DS
 - Snowflake DS -> dbt -> Snowflake DW
-- Airflow orquestrando localmente em Docker
+- Airflow orquestrando dbt localmente em Docker
 
 ## Estrutura principal
 
@@ -21,75 +21,83 @@ etl_bi/
 
 ## Padrão do projeto
 
-- `src/pipelines/`: pipelines Python da camada DS
 - `dags/`: DAGs Airflow
 - `dbt/solix_dbt/models/staging/`: staging a partir do DS
 - `dbt/solix_dbt/models/marts/dimensions/`: dimensoes DW
-- `src/audit/`: auditoria DS e DW
+- `src/utils/`: helpers Airflow e dbt
 - `sql/control/`: scripts SQL de tabelas de controle
 - `sql/ds/`: scripts SQL da camada DS por entidade
 - `sql/dw/`: scripts SQL da camada DW por entidade
 
 Modelo de referência para novas entidades:
 
-- use o fluxo completo de `SX_ESTADO_D` como base funcional
-- guia de replicação:
-  - `docs/TEMPLATES.md`
-- guia das DAGs:
+- use o fluxo completo de dbt como base funcional
+- guia de orquestração:
   - `docs/AIRFLOW_DAGS.md`
+- guia de ingestão local:
+  - `docs/AIRBYTE.md`
 
 ## Arquitetura de execução
 
-- `src/pipelines/`: runtime Python da camada DS
 - `dbt/solix_dbt/`: runtime dbt da camada DW
 - `dags/`: orquestração Airflow
-- `docker-compose.local.yml`: stack local com Airflow + Postgres + Redis + workers separados
+- `docker-compose.local.yml`: stack local de Airflow/dbt, Postgres e Redis
 - `infra/airflow/`: imagem base do Airflow para scheduler/webserver/triggerer
-- `infra/runtime/python/`: imagem do worker DS
 - `infra/runtime/dbt/`: imagem do worker DW/dbt
 - `.env.local` / `.env.docker`: configuracoes separadas para Windows local e Docker local
 
 ## Execução local
 
-### DS
+### Ingestão local via Airbyte
 
-```powershell
-python src/pipelines/load_sx_estado_d.py --id_cliente 7
-```
-
-Backfill manual por janela:
-
-```powershell
-python src/pipelines/load_sx_estado_d.py --id_cliente 7 --data_inicio 2018-01-01 --data_fim 2026-03-31
-```
+1. instalar e subir o Airbyte localmente via `abctl`
+2. configurar Airbyte no UI em `http://localhost:8000`
+3. criar conectores de origem para Oracle e PostgreSQL
+4. escrever os dados no Snowflake DS apropriado
+5. opcionalmente registrar o `connection_id` no trigger da DAG para o Airflow disparar a sync
 
 ### DW
 
 ```powershell
 . .\scripts\load_local_env.ps1
 cd dbt\solix_dbt
-dbt build --select stg_ds__sx_estado_d dim_sx_estado_d
+dbt build --select .
 ```
 
 ### Fluxo completo via Airflow
 
+- copiar `.env.docker.example` para `.env.docker`
 - preparar `.env.docker` e a chave em `secrets/snowflake/ETL_KEYPAIR.p8`
-- subir a stack local com `docker compose -f docker-compose.local.yml up --build`
+- subir o Airbyte localmente via `abctl`
+- subir a stack do Airflow com `docker compose -f docker-compose.local.yml up --build -d`
 - acessar Airflow em `http://localhost:8080`
-- disparar a DAG `load_sx_estado_d_dag`
+- usar `load_dw_dbt_dag` para execucao manual sob demanda
+- usar `schedule_sx_estado_d_incremental_dag` para o disparo frequente
+- usar `schedule_sx_estado_d_full_dag` para a reconciliacao full diaria
+
+### Fluxo local com Airbyte
+
+- subir o Airbyte localmente via `abctl`
+- abrir o Airbyte UI em `http://localhost:8000`
+- configurar conectores Oracle e PostgreSQL para Snowflake DS
+- usar o mesmo destino Snowflake DS que o dbt consome
+- o código Python de ingestão foi removido nesta versão para privilegiar Airbyte
 
 ### Estratégia incremental
 
-- padrão: `INCREMENTAL_WATERMARK`
-- exceção operacional: `MANUAL_BACKFILL`
+- padrão: configurado por stream no Airbyte
+- transformação incremental: implementada no `dbt` a partir do `DS`
+- para `SX_ESTADO_D`, usar modo hibrido:
+  - sync incremental no dia a dia
+  - reconciliacao full periodica para permitir `FG_ATIVO = 0` em ausentes
 - documentação detalhada:
   - `docs/INCREMENTAL_LOADING.md`
 
 ### Filas e workers
 
-- tasks DS rodam na fila `ds`
-- tasks dbt/DW rodam na fila `dbt`
-- scheduler e webserver nao precisam carregar dependencias pesadas de Oracle/dbt
+- tasks da DAG atual rodam na fila `dbt`
+- scheduler e webserver nao precisam carregar dependencias pesadas de dbt
+- a extracao DS fica no Airbyte, fora deste runtime Python
 
 ## GitHub
 
@@ -122,7 +130,7 @@ O projeto ja esta preparado para:
 
 - virar pacote Python via `pyproject.toml`
 - subir em imagem base de Airflow separada dos workers especializados
-- usar workers especializados por fila para DS e dbt
+- usar worker especializado para a orquestracao `dbt` e integracao leve com Airbyte API
 - usar variaveis de ambiente e secret files em vez de credenciais fixas
 
 ## Próximos passos naturais

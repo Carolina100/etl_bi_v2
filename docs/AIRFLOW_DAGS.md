@@ -1,315 +1,136 @@
 # DAGs do Airflow
 
-Este documento explica, de forma didática, o que cada DAG do projeto faz e como o fluxo foi desenhado.
+Este projeto usa Airflow como orquestrador da etapa analitica do pipeline.
 
-## Objetivo das DAGs
+O desenho atual e:
 
-Cada DAG representa o fluxo completo de uma entidade no caminho:
+- Airbyte sincroniza a camada `DS`
+- Airflow coordena a ordem de execucao
+- dbt transforma `DS` em `DW`
 
-- Oracle -> Python -> Snowflake DS
-- Snowflake DS -> dbt -> Snowflake DW
+## DAG principal
 
-Para a fato `SX_DETALHES_OPERACAO_F`, a origem segue um trilho proprio:
+- [load_dw_dbt_dag.py](../dags/load_dw_dbt_dag.py)
+- [schedule_sx_estado_d_incremental_dag.py](../dags/schedule_sx_estado_d_incremental_dag.py)
+- [schedule_sx_estado_d_full_dag.py](../dags/schedule_sx_estado_d_full_dag.py)
 
-- PostgreSQL -> Python -> Snowflake DS
-- Snowflake DS -> dbt -> Snowflake DW
+## O que a DAG faz
 
-Hoje existem estas DAGs:
+A DAG principal foi preparada para:
 
-- [load_sx_estado_d_dag.py](../dags/load_sx_estado_d_dag.py)
-- [load_sx_operacao_d_dag.py](../dags/load_sx_operacao_d_dag.py)
-- [load_sx_fazenda_d_dag.py](../dags/load_sx_fazenda_d_dag.py)
-- [load_sx_equipamento_d_dag.py](../dags/load_sx_equipamento_d_dag.py)
-- [load_sx_detalhes_operacao_f_dag.py](../dags/load_sx_detalhes_operacao_f_dag.py)
+1. opcionalmente disparar uma sync do Airbyte via API
+2. aguardar a conclusao da sync, quando configurado
+3. executar `dbt build` no projeto `dbt/solix_dbt`
 
-## O que todas as DAGs fazem
+As duas DAGs de agendamento foram preparadas para:
 
-Todas seguem a mesma lógica:
+- disparar a DAG principal com `conf` apropriado
+- separar agenda incremental e agenda full sem duplicar a logica da execucao
 
-1. validam os parâmetros da execução
-2. resolvem quais clientes serão processados
-3. montam uma requisição DS por cliente
-4. executam a camada DS em paralelo por cliente
-5. consolidam os resultados do DS
-6. registram quais clientes falharam
-7. executam o dbt uma única vez no final
-8. registram auditoria do DW
+Isso permite dois modos operacionais:
 
-Nas DAGs das dimensões, o mesmo fluxo também suporta um terceiro modo:
+- modo simples
+  - a sync do Airbyte acontece fora do Airflow
+  - a DAG roda apenas o `dbt build`
 
-- `FULL_RECONCILIATION`
+- modo orquestrado
+  - o Airflow recebe o `airbyte_connection_id`
+  - dispara a sync do Airbyte
+  - espera sucesso
+  - roda o `dbt build`
 
-Esse modo faz a reconciliação completa da dimensão na fonte e marca como inativos no `DS` os registros ausentes para cada cliente.
+## Parametros de execucao
 
-Observacao de semantica:
+### `dag_run.conf`
 
-- nas dimensoes, a reconciliacao usa `FG_ATIVO = 1/0`
-- na fato `SX_DETALHES_OPERACAO_F`, o estado vindo da fonte e persistido em `FG_STATUS = A/I`
+Campos suportados:
 
-Essa diferenca e intencional e esta detalhada na documentacao de carga incremental.
+- `models`
+  - lista de modelos dbt ou string separada por virgula
+- `airbyte_connection_id`
+  - `connection_id` da conexao Airbyte a ser sincronizada
+- `wait_for_airbyte`
+  - `true` por padrao
+- `airbyte_timeout_seconds`
+  - timeout maximo de espera da sync
+- `airbyte_poll_interval_seconds`
+  - intervalo de polling da API do Airbyte
+- `reconciliation_mode`
+  - `incremental` ou `full`
+  - controla quando o dbt pode inativar ausentes em `DS.SX_ESTADO_D`
 
-## Explicando cada etapa
-
-### 1. `validate_and_prepare_params`
-
-Esta task:
-
-- lê `dag_run.conf` ou os `params` da DAG
-- aceita:
-  - `id_cliente`
-  - `id_clientes`
-  - `data_inicio`
-  - `data_fim`
-  - `full_reconciliation`
-- identifica o modo de carga:
-  - `INCREMENTAL_WATERMARK`
-  - `MANUAL_BACKFILL`
-  - `FULL_RECONCILIATION`
-
-Se nenhuma data for informada, o padrão é incremental.
-
-Se `full_reconciliation=true`, a pipeline faz uma foto completa da dimensão na fonte para o cliente e marca no `DS` como inativos os registros que não aparecerem mais nessa foto.
-
-### 2. `resolve_clientes`
-
-Esta task decide quais clientes serão executados.
-
-Regras:
-
-- se `id_cliente` ou `id_clientes` vier manualmente:
-  - usa exatamente os clientes informados
-- se nenhum cliente vier:
-  - consulta `SOLIX_BI.DS.SX_CLIENTE_D`
-  - busca todos os clientes ativos (`FL_ATIVO = TRUE`)
-
-Objetivo:
-
-- evitar cadastrar clientes manualmente em cada DAG
-- permitir execução manual quando necessário
-
-## 3. `build_ds_requests`
-
-Transforma a lista de clientes em uma lista de requisições da camada DS.
-
-Exemplo:
-
-```python
-[
-  {"id_cliente": 7, "data_inicio": None, "data_fim": None},
-  {"id_cliente": 8, "data_inicio": None, "data_fim": None},
-]
-```
-
-Cada item dessa lista alimenta uma execução paralela da pipeline Python.
-
-### 4. `run_ds_pipeline_task`
-
-Executa a pipeline Python da entidade para um cliente por vez.
-
-Exemplo:
-
-- `load_sx_estado_d.py`
-- `load_sx_operacao_d.py`
-- `load_sx_fazenda_d.py`
-- `load_sx_equipamento_d.py`
-
-O que ela faz por cliente:
-
-- lê o watermark daquele cliente
-- extrai o delta no Oracle
-- gera CSV temporário
-- envia para o stage do Snowflake
-- aplica `MERGE` na tabela DS
-- quando `full_reconciliation=true`, inativa no `DS` os registros ausentes na fonte para o cliente
-- atualiza watermark
-- registra auditoria
-
-### 5. `summarize_ds_results`
-
-Depois que todas as execuções DS terminam, essa task consolida:
-
-- clientes com sucesso
-- clientes com falha
-- resultados válidos para o DW
-
-Ela produz algo como:
-
-```python
-{
-  "successful_clientes": [7, 8],
-  "failed_clientes": [9],
-  "successful_results": [...],
-  "failed_results": [...]
-}
-```
-
-### 6. `report_failed_clients`
-
-Esta task não interrompe o fluxo.
-
-Ela serve para:
-
-- deixar claro no log do Airflow quais clientes falharam
-- facilitar acompanhamento operacional
-
-Além disso, os clientes com falha também são gravados na auditoria.
-
-### 7. `run_dw_dbt`
-
-Executa o `dbt build` uma vez só no final.
-
-Isso é importante porque:
-
-- o DS é incremental por cliente
-- o DW precisa rodar consolidado
-- evita executar dbt uma vez por cliente
-- reduz chamadas desnecessárias ao Snowflake
-
-O DW roda:
-
-- se pelo menos um cliente tiver sucesso no DS
-- com os dados atualizados dos clientes bem-sucedidos
-
-O DW não roda:
-
-- se todos os clientes falharem no DS
-
-## Incremental x Full nas dimensões
-
-Para as dimensões, hoje existem três trilhos operacionais:
-
-- `INCREMENTAL_WATERMARK`
-  - uso frequente no dia a dia
-  - processa só o delta por `UPDATED_ON`
-- `MANUAL_BACKFILL`
-  - reprocessamento controlado por período
-- `FULL_RECONCILIATION`
-  - foto completa da dimensão para o cliente
-  - usada para consistência com a fonte
-  - trata registros removidos da origem marcando `FG_ATIVO = 0` no `DS`
-
-Na prática, a recomendação operacional é:
-
-- incremental várias vezes ao dia
-- full reconciliation uma vez ao dia
-
-## Por que o DW roda só uma vez no final
-
-O filtro incremental das dimensões do DW usa:
-
-```sql
-BI_UPDATED_AT > max(BI_UPDATED_AT)
-```
-
-Esse corte é global na tabela do DW, não por cliente.
-
-Por isso, o desenho mais seguro é:
-
-- DS em paralelo por cliente
-- DW único no final
-
-Assim:
-
-- clientes bem-sucedidos entram no DW
-- clientes que falharam ficam para a próxima execução
-- o incremental do DW continua consistente
-
-## O que acontece se um cliente falhar
-
-Hoje o comportamento é:
-
-- o cliente que falhou fica fora da atualização do DW naquela execução
-- os clientes que tiveram sucesso continuam para o DW
-- a falha fica registrada:
-  - no log do Airflow
-  - na `CTL_LOAD_AUDIT`
-
-Isso evita que um único cliente bloqueie todos os outros.
-
-## Auditoria gravada pelas DAGs
-
-As DAGs usam as tabelas atuais:
-
-- `SOLIX_BI.DS.CTL_BATCH_EXECUTION`
-- `SOLIX_BI.DS.CTL_LOAD_AUDIT`
-
-Eventos importantes gravados no `DW`:
-
-- `DS_SUCCESSFUL_CLIENTS`
-- `DS_FAILED_CLIENTS`
-- `DBT_BUILD`
-- `DBT_MODEL_*`
-- `DBT_ERROR`, se houver falha
-
-## Execução manual
-
-Você pode executar manualmente de duas formas.
-
-### Um cliente
+### Exemplo apenas com dbt
 
 ```json
 {
-  "id_cliente": 7
+  "models": ["stg_ds__sx_estado_d", "dim_sx_estado_d"]
 }
 ```
 
-### Vários clientes
+### Exemplo com sync Airbyte antes do dbt
 
 ```json
 {
-  "id_clientes": [7, 8, 9]
+  "airbyte_connection_id": "00000000-0000-0000-0000-000000000000",
+  "models": ["stg_ds__sx_estado_d", "dim_sx_estado_d"],
+  "reconciliation_mode": "incremental",
+  "wait_for_airbyte": true,
+  "airbyte_timeout_seconds": 3600,
+  "airbyte_poll_interval_seconds": 15
 }
 ```
 
-### Backfill manual
+### Exemplo de reconciliacao full
 
 ```json
 {
-  "id_cliente": 7,
-  "data_inicio": "2026-01-01",
-  "data_fim": "2026-01-31"
+  "airbyte_connection_id": "00000000-0000-0000-0000-000000000000",
+  "models": ["ds_sx_estado_d", "stg_ds__sx_estado_d", "dim_sx_estado_d"],
+  "reconciliation_mode": "full",
+  "wait_for_airbyte": true
 }
 ```
 
-### Reconciliação full
+## Requisitos de ambiente
 
-```json
-{
-  "id_cliente": 7,
-  "full_reconciliation": true
-}
-```
+Para o disparo da sync via API, o runtime do Airflow precisa conhecer:
 
-### Execução automática
+- `AIRBYTE_API_URL`
+- `AIRBYTE_API_TOKEN`, quando a instalacao exigir autenticacao
 
-Se nenhum cliente for informado:
+No Docker local deste projeto, o recomendado e:
 
-- a DAG busca todos os clientes ativos na `SX_CLIENTE_D`
+- Airbyte rodando localmente via `abctl`
+- Airflow acessando a API do Airbyte por `http://host.docker.internal:8000`
 
-## Filas
+Opcionalmente, o `connection_id` pode vir de:
 
-As DAGs usam duas filas:
+- `dag_run.conf`
+- parametro padrao da DAG
+- variavel de ambiente externa usada na automacao do deploy
 
-- `ds`
-  - tasks Python de ingestão Oracle -> DS
-- `dbt`
-  - task única do DW
+## Execucao local
 
-Isso ajuda a separar:
+- subir o Airbyte localmente via `abctl`
+- subir a stack do Airflow com `docker compose -f docker-compose.local.yml up --build -d`
+- acessar Airflow em `http://localhost:8080`
+- configurar o Airbyte conforme [AIRBYTE.md](./AIRBYTE.md)
+- usar `load_dw_dbt_dag` para execucoes manuais
+- usar `schedule_sx_estado_d_incremental_dag` para o agendamento frequente
+- usar `schedule_sx_estado_d_full_dag` para a reconciliacao diaria
 
-- dependências Oracle/Python
-- dependências dbt/Snowflake
+## Modelo operacional recomendado
 
-## Resumo mental
+- `load_dw_dbt_dag`
+  - DAG principal de execucao
+  - sem `schedule` proprio
+- `schedule_sx_estado_d_incremental_dag`
+  - agenda a rotina incremental
+- `schedule_sx_estado_d_full_dag`
+  - agenda a rotina full de reconciliacao
 
-Pense assim:
+## Limites de responsabilidade
 
-- DS = processamento por cliente
-- DW = consolidação final
-
-Ou seja:
-
-- cada cliente atualiza sua própria parte da DS
-- depois o dbt lê a DS consolidada e atualiza o DW uma única vez
-
-Esse é o motivo principal do desenho atual das DAGs.
+- Airflow nao implementa extracao customizada de Oracle ou PostgreSQL
+- Airflow apenas integra com a API do Airbyte quando a sync precisa entrar no mesmo fluxo orquestrado
+- transformacoes e modelagem continuam no `dbt`
