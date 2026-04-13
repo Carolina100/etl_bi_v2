@@ -174,8 +174,7 @@ fact_rows as (
        and staged_source.CD_ZONA = dim_fazenda.CD_ZONA
        and staged_source.CD_TALHAO = dim_fazenda.CD_TALHAO
     left join dim_estado
-        on staged_source.ID_CLIENTE = dim_estado.ID_CLIENTE
-       and staged_source.CD_ESTADO = dim_estado.CD_ESTADO
+        on staged_source.CD_ESTADO = dim_estado.CD_ESTADO
     left join dim_ordem_servico
         on staged_source.ID_CLIENTE = dim_ordem_servico.ID_CLIENTE
        and staged_source.CD_ORDEM_SERVICO = dim_ordem_servico.CD_ORDEM_SERVICO
