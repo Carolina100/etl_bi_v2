@@ -1,13 +1,4 @@
-create transient table if not exists SOLIX_BI.DS.STG_SX_ESTADO_D (
-    ID_CLIENTE number(38, 0) not null,
-    CD_ESTADO varchar not null,
-    DESC_ESTADO varchar,
-    SOURCE_UPDATED_AT timestamp_ntz,
-    AIRBYTE_SYNCED_AT timestamp_ntz
-);
-
 create table if not exists SOLIX_BI.DS.SX_ESTADO_D (
-    ID_CLIENTE number(38, 0) not null,
     CD_ESTADO varchar not null,
     DESC_ESTADO varchar,
     FG_ATIVO number(1, 0) not null default 1,
@@ -15,5 +6,6 @@ create table if not exists SOLIX_BI.DS.SX_ESTADO_D (
     BI_CREATED_AT timestamp_ntz,
     BI_UPDATED_AT timestamp_ntz,
     SOURCE_UPDATED_AT timestamp_ntz,
-    constraint UK_DS_SX_ESTADO_D unique (ID_CLIENTE, CD_ESTADO)
+    AIRBYTE_EXTRACTED_AT timestamp_ntz,
+    constraint UK_DS_SX_ESTADO_D unique (CD_ESTADO)
 );

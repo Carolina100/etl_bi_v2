@@ -12,6 +12,8 @@ create table if not exists SOLIX_BI.DS.SX_EQUIPAMENTO_D (
     ETL_BATCH_ID varchar,
     BI_CREATED_AT timestamp_ntz,
     BI_UPDATED_AT timestamp_ntz,
+    SOURCE_UPDATED_AT timestamp_ntz,
+    AIRBYTE_EXTRACTED_AT timestamp_ntz,
     constraint UK_DS_SX_EQUIPAMENTO_D unique (ID_CLIENTE, CD_EQUIPAMENTO)
 );
 

@@ -1,67 +1,43 @@
 {#
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  MODELO DS — TEMPLATE MULTI-TENANT (RAW → DS com UNION ALL dinâmico)        ║
+║  MODELO DS — RAW → DS (incremental por merge)                               ║
 ║                                                                              ║
 ║  PARA REUTILIZAR PARA OUTRA TABELA, ALTERE APENAS AS VARIAVEIS ABAIXO       ║
-║  MARCADAS COM OS NUMEROS (1), (2), (3), (4) E (5).                          ║
+║  MARCADAS COM OS NUMEROS (1) A (6).                                          ║
 ║  O restante do modelo NAO precisa ser tocado.                                ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-
-  COMO FUNCIONA:
-  - O Airbyte deposita uma tabela por cliente no schema RAW com o padrao:
-      RAW.{STREAM_PREFIX}{NOME_TABELA_POSTGRES}
-      Ex: RAW.AMAGGI_CDT_ESTADO
-  - Este modelo descobre essas tabelas automaticamente via macro
-  - Faz UNION ALL de todos os clientes ativos na CTL_AIRBYTE_CONEXOES
-  - Aplica merge incremental na tabela DS correspondente
 #}
 
-{# ┌─────────────────────────────────────────────────────────────────────────┐
-   │  (1) SUFIXO DA ENTIDADE NO RAW                                          │
-   │  Parte final do nome da tabela no RAW, sem o prefixo do cliente.        │
-   │  Ex: RAW.AMAGGI_CDT_ESTADO → sufixo é 'CDT_ESTADO'                     │
-   └───────────────────────────────────────────────────────────────────────── #}
-{% set ENTITY_TABLE_SUFFIX = 'CDT_ESTADO' %}
+-- ═══════════════════════════════════════════════════════════════════════════
+-- BLOCO DE CONFIGURAÇÃO — ALTERE SÓ AQUI AO REUTILIZAR PARA OUTRA TABELA
+-- ═══════════════════════════════════════════════════════════════════════════
 
-{# ┌─────────────────────────────────────────────────────────────────────────┐
-   │  (2) NOME DA TABELA DESTINO NO SCHEMA DS                                │
-   │  Nome exato da tabela que será criada/atualizada em DS.                 │
-   └───────────────────────────────────────────────────────────────────────── #}
+{# (1) Nome da tabela no RAW. Exemplo: RAW.CDT_ESTADO → sufixo = 'CDT_ESTADO' #}
+{% set ENTITY_RAW_TABLE = 'CDT_ESTADO' %}
+
+{# (2) Nome da tabela destino que será criada/atualizada no schema DS #}
 {% set MODEL_ALIAS = 'SX_ESTADO_D' %}
 
-{# ┌─────────────────────────────────────────────────────────────────────────┐
-   │  (3) CHAVE NATURAL — colunas que identificam unicamente um registro      │
-   │  Usadas no merge incremental (unique_key).                              │
-   └───────────────────────────────────────────────────────────────────────── #}
-{% set NATURAL_KEY_COLUMNS = ['ID_CLIENTE', 'CD_ESTADO'] %}
+{# (3) Colunas que identificam unicamente um registro (chave para o merge) #}
+{% set NATURAL_KEY_COLUMNS = ['CD_ESTADO'] %}
 
-{# ┌─────────────────────────────────────────────────────────────────────────┐
-   │  (4) NOME DA VARIAVEL dbt PARA MODO DE RECONCILIACAO                    │
-   │  Padrao: <alias_em_minusculo>_reconciliation_mode                       │
-   │  Uso: dbt run --vars '{"sx_estado_d_reconciliation_mode": "full"}'      │
-   └───────────────────────────────────────────────────────────────────────── #}
-{% set RECONCILIATION_VAR = 'sx_estado_d_reconciliation_mode' %}
+{# (4) Coluna de data de atualização da origem — usada como cursor pelo Airbyte #}
+{% set SOURCE_UPDATED_AT_COLUMN = 'dt_updated' %}
 
-{# ┌─────────────────────────────────────────────────────────────────────────┐
-   │  (5) COLUNAS LIDAS DO RAW — mude os casts e nomes conforme a entidade   │
-   │                                                                         │
-   │  REGRA: a coluna SOURCE_UPDATED_AT deve apontar para o campo de         │
-   │  data de atualizacao da tabela no Postgres (geralmente updated_on,      │
-   │  updated_at, dt_atualizacao, etc.)                                      │
-   │                                                                         │
-   │  Para descobrir as colunas disponíveis no RAW, execute:                 │
-   │  SELECT * FROM SOLIX_BI.RAW.AMAGGI_CDT_ESTADO LIMIT 1;                 │
-   └───────────────────────────────────────────────────────────────────────── #}
-{# (5) As colunas sao usadas no bloco staged_airbyte mais abaixo #}
+{# (5) A tabela de origem possui flag de ativo/inativo?
+       true  → lê a coluna da origem e propaga para o DS (dimensões por cliente)
+       false → dimensão global/compartilhada, sem flag; FG_ATIVO sempre = 1 #}
+{% set HAS_FG_ATIVO = false %}
 
-{# ══════════════════════════════════════════════════════════════════════════ #}
-{# DAQUI PARA BAIXO NAO E NECESSARIO ALTERAR — LOGICA GENERICA DO TEMPLATE  #}
-{# ══════════════════════════════════════════════════════════════════════════ #}
+{# (6) [Só preencher se HAS_FG_ATIVO = true] Nome da coluna de flag na origem #}
+{% set FG_ATIVO_COLUMN = 'FG_ATIVO' %}
 
-{% set TARGET_SCHEMA            = 'DS' %}
-{% set BATCH_ID                 = invocation_id %}
-{% set RECONCILIATION_MODE      = var(RECONCILIATION_VAR, 'incremental') | lower %}
-{% set IS_FULL_RECONCILIATION   = RECONCILIATION_MODE == 'full' %}
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CONFIGURAÇÃO DO MODELO dbt (não alterar)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+{% set TARGET_SCHEMA = 'DS' %}
+{% set BATCH_ID      = invocation_id %}
 
 {{ config(
     materialized='incremental',
@@ -73,173 +49,154 @@
     tags=['ds', 'incremental', MODEL_ALIAS | lower]
 ) }}
 
-{% if execute %}
-    {% set client_tables_sql %}
-        {{ discover_raw_client_tables(ENTITY_TABLE_SUFFIX) }}
-    {% endset %}
-    {% set client_tables = run_query(client_tables_sql) %}
-    {% set table_rows = client_tables.rows %}
-{% else %}
-    {% set table_rows = [] %}
-{% endif %}
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PASSO 1 — LEITURA DO RAW
+-- Lê diretamente a tabela RAW da entidade. Sem UNION ALL, sem CTL de conexões.
+-- Esta entidade é global e não possui segregação por cliente.
+-- O FG_ATIVO da origem é lido aqui e propagado para o DS quando existir.
+--
+-- ⚠️  Ajuste as colunas do SELECT abaixo para refletir a entidade:
+--     - Mantenha FG_ATIVO, SOURCE_UPDATED_AT e AIRBYTE_EXTRACTED_AT
+--     - Altere as colunas do meio para as colunas de negócio da tabela RAW
+-- ═══════════════════════════════════════════════════════════════════════════
 
 with staged_airbyte as (
-
-{% if table_rows | length == 0 %}
-
     select
-        cast(null as number(38, 0))  as ID_CLIENTE,
-        cast(null as varchar)         as CD_ESTADO,
-        cast(null as varchar)         as DESC_ESTADO,
-        cast(null as timestamp_ntz)   as SOURCE_UPDATED_AT,
-        cast(null as timestamp_ntz)   as _airbyte_extracted_at
-    where 1 = 0
-
-{% else %}
-
-    {% for row in table_rows %}
-    {% set raw_table_name = row[0] %}
-    {% set id_cliente      = row[1] %}
-
-    select
-        {# ── (5) AJUSTE AS COLUNAS ABAIXO CONFORME A ENTIDADE ─────────────── #}
-        cast({{ id_cliente }}        as number(38, 0))  as ID_CLIENTE,
-        cast(CD_ESTADO               as varchar)         as CD_ESTADO,
-        cast(DESC_ESTADO             as varchar)         as DESC_ESTADO,
-        cast(UPDATED_ON              as timestamp_ntz)   as SOURCE_UPDATED_AT,
-        {# ── FIM DO BLOCO DE COLUNAS ──────────────────────────────────────── #}
-        cast(_airbyte_extracted_at   as timestamp_ntz)   as _airbyte_extracted_at
-    from SOLIX_BI.RAW.{{ raw_table_name }}
-
-    {% if not loop.last %} union all {% endif %}
-    {% endfor %}
-
-{% endif %}
-
+        -- ▼ Colunas de negócio da entidade (alterar conforme a tabela)
+        cast(CD_ESTADO                      as varchar)         as CD_ESTADO,
+        cast(DESC_ESTADO                    as varchar)         as DESC_ESTADO,
+        -- ▲ Fim das colunas de negócio
+        -- FG_ATIVO: lido da origem se HAS_FG_ATIVO=true; caso contrário, sempre ativo
+        {% if HAS_FG_ATIVO %}
+        cast({{ FG_ATIVO_COLUMN }}          as number(1, 0))   as FG_ATIVO,
+        {% else %}
+        cast(1                              as number(1, 0))   as FG_ATIVO,  -- global: sem flag
+        {% endif %}
+        cast({{ SOURCE_UPDATED_AT_COLUMN }} as timestamp_ntz)  as SOURCE_UPDATED_AT,
+        cast(_AIRBYTE_EXTRACTED_AT          as timestamp_ntz)  as AIRBYTE_EXTRACTED_AT
+    from SOLIX_BI.RAW.{{ ENTITY_RAW_TABLE }}
 ),
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PASSO 2 — DEDUPLICAÇÃO
+-- Garante uma única linha por chave natural, pegando a versão mais recente.
+-- Cobre o caso de re-entrega pelo Airbyte (ex: recargas, sobreposição de cursor).
+-- ═══════════════════════════════════════════════════════════════════════════
 
 latest_stage as (
-    select
-        ID_CLIENTE,
-        CD_ESTADO,
-        DESC_ESTADO,
-        SOURCE_UPDATED_AT,
-        _airbyte_extracted_at
+    select *
     from staged_airbyte
     qualify row_number() over (
-        partition by ID_CLIENTE, CD_ESTADO
-        order by SOURCE_UPDATED_AT desc nulls last, _airbyte_extracted_at desc nulls last
+        partition by CD_ESTADO
+        order by SOURCE_UPDATED_AT desc nulls last,
+                 AIRBYTE_EXTRACTED_AT desc nulls last
     ) = 1
 ),
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PASSO 3 — ESTADO ATUAL DA TABELA DS
+-- Lê o que já existe no DS para comparar com o que veio do RAW.
+-- Na primeira execução (full-refresh) a tabela ainda não existe → vazio.
+-- ═══════════════════════════════════════════════════════════════════════════
 
 current_target as (
     {% if is_incremental() %}
     select
-        ID_CLIENTE,
         CD_ESTADO,
         DESC_ESTADO,
         FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
         BI_UPDATED_AT,
-        SOURCE_UPDATED_AT
+        SOURCE_UPDATED_AT,
+        AIRBYTE_EXTRACTED_AT
     from {{ this }}
     {% else %}
     select
-        cast(null as number(38, 0))  as ID_CLIENTE,
-        cast(null as varchar)         as CD_ESTADO,
-        cast(null as varchar)         as DESC_ESTADO,
-        cast(null as number(1, 0))    as FG_ATIVO,
-        cast(null as varchar)         as ETL_BATCH_ID,
-        cast(null as timestamp_ntz)   as BI_CREATED_AT,
-        cast(null as timestamp_ntz)   as BI_UPDATED_AT,
-        cast(null as timestamp_ntz)   as SOURCE_UPDATED_AT
+        cast(null as varchar)        as CD_ESTADO,
+        cast(null as varchar)        as DESC_ESTADO,
+        cast(null as number(1, 0))   as FG_ATIVO,
+        cast(null as varchar)        as ETL_BATCH_ID,
+        cast(null as timestamp_ntz)  as BI_CREATED_AT,
+        cast(null as timestamp_ntz)  as BI_UPDATED_AT,
+        cast(null as timestamp_ntz)  as SOURCE_UPDATED_AT,
+        cast(null as timestamp_ntz)  as AIRBYTE_EXTRACTED_AT
     where 1 = 0
     {% endif %}
 ),
 
-changed_or_new_rows as (
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PASSO 4 — LINHAS NOVAS OU ALTERADAS
+-- Compara o RAW (latest_stage) com o DS atual (current_target) e seleciona:
+--   • Registros novos (não existem no DS ainda)
+--   • Registros alterados (qualquer coluna de negócio mudou)
+--   • Registros cujo status ativo/inativo mudou na origem (soft delete)
+--
+-- REGRAS IMPORTANTES:
+--   • FG_ATIVO vem sempre da origem, nunca hardcoded
+--   • BI_CREATED_AT é preservado do INSERT original e nunca sobrescrito
+--   • BI_UPDATED_AT só muda quando há mudança real de negócio
+--   • AIRBYTE_EXTRACTED_AT não entra no critério de mudança — é metadado
+--     de extração e muda a cada run mesmo sem alteração de dado
+-- ═══════════════════════════════════════════════════════════════════════════
+
+changed_or_new as (
     select
-        s.ID_CLIENTE,
         s.CD_ESTADO,
         s.DESC_ESTADO,
-        cast(1 as number(1, 0))           as FG_ATIVO,
-        cast('{{ BATCH_ID }}' as varchar)  as ETL_BATCH_ID,
+        s.FG_ATIVO,
+        cast('{{ BATCH_ID }}' as varchar) as ETL_BATCH_ID,
+
+        -- BI_CREATED_AT: preenche só na criação, preserva nas atualizações
         coalesce(
             t.BI_CREATED_AT,
             convert_timezone('UTC', current_timestamp())::timestamp_ntz
-        )                                  as BI_CREATED_AT,
+        ) as BI_CREATED_AT,
+
+        -- BI_UPDATED_AT: atualiza SOMENTE quando há mudança real de negócio
         case
-            when t.ID_CLIENTE is null
-                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
+            when t.CD_ESTADO is null
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz  -- novo registro
             when coalesce(t.DESC_ESTADO, '') <> coalesce(s.DESC_ESTADO, '')
-                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz  -- descricao mudou
             when coalesce(t.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
               <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
-                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.FG_ATIVO, 1) <> 1
-                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            else t.BI_UPDATED_AT
-        end                                as BI_UPDATED_AT,
-        s.SOURCE_UPDATED_AT
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz  -- origem atualizou
+            {% if HAS_FG_ATIVO %}
+            when coalesce(t.FG_ATIVO, 1) <> coalesce(s.FG_ATIVO, 1)
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz  -- status mudou
+            {% endif %}
+            else t.BI_UPDATED_AT                                                  -- sem mudanca real
+        end as BI_UPDATED_AT,
+
+        s.SOURCE_UPDATED_AT,
+        s.AIRBYTE_EXTRACTED_AT
+
     from latest_stage s
     left join current_target t
-        on  s.ID_CLIENTE = t.ID_CLIENTE
-        and s.CD_ESTADO  = t.CD_ESTADO
-    where t.ID_CLIENTE is null
-       or coalesce(t.DESC_ESTADO, '') <> coalesce(s.DESC_ESTADO, '')
+        on s.CD_ESTADO = t.CD_ESTADO
+
+    -- Filtra apenas o que realmente mudou para evitar writes desnecessários no DS
+    where t.CD_ESTADO is null                                                          -- novo
+       or coalesce(t.DESC_ESTADO, '')            <> coalesce(s.DESC_ESTADO, '')        -- dado mudou
        or coalesce(t.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
-       <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
-       or coalesce(t.FG_ATIVO, 1) <> 1
-),
-
-missing_rows as (
-    {% if is_incremental() and IS_FULL_RECONCILIATION %}
-    select
-        t.ID_CLIENTE,
-        t.CD_ESTADO,
-        t.DESC_ESTADO,
-        cast(0 as number(1, 0))            as FG_ATIVO,
-        cast('{{ BATCH_ID }}' as varchar)   as ETL_BATCH_ID,
-        t.BI_CREATED_AT,
-        convert_timezone('UTC', current_timestamp())::timestamp_ntz as BI_UPDATED_AT,
-        t.SOURCE_UPDATED_AT
-    from current_target t
-    where exists (select 1 from latest_stage)
-      and coalesce(t.FG_ATIVO, 1) <> 0
-      and not exists (
-          select 1
-          from latest_stage s
-          where s.ID_CLIENTE = t.ID_CLIENTE
-            and s.CD_ESTADO  = t.CD_ESTADO
-      )
-    {% else %}
-    select
-        cast(null as number(38, 0))  as ID_CLIENTE,
-        cast(null as varchar)         as CD_ESTADO,
-        cast(null as varchar)         as DESC_ESTADO,
-        cast(null as number(1, 0))    as FG_ATIVO,
-        cast(null as varchar)         as ETL_BATCH_ID,
-        cast(null as timestamp_ntz)   as BI_CREATED_AT,
-        cast(null as timestamp_ntz)   as BI_UPDATED_AT,
-        cast(null as timestamp_ntz)   as SOURCE_UPDATED_AT
-    where 1 = 0
-    {% endif %}
-),
-
-final as (
-    select * from changed_or_new_rows
-    union all
-    select * from missing_rows
+         <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)                -- origem atualizou
+       {% if HAS_FG_ATIVO %}
+       or coalesce(t.FG_ATIVO, 1)               <> coalesce(s.FG_ATIVO, 1)            -- status mudou
+       {% endif %}
 )
 
 select
-    ID_CLIENTE,
     CD_ESTADO,
     DESC_ESTADO,
     FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,
     BI_UPDATED_AT,
-    SOURCE_UPDATED_AT
-from final
+    SOURCE_UPDATED_AT,
+    AIRBYTE_EXTRACTED_AT
+from changed_or_new

@@ -7,12 +7,8 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns:
-              - ID_CLIENTE
               - CD_ESTADO
     columns:
-      - name: ID_CLIENTE
-        tests:
-          - not_null
       - name: CD_ESTADO
         tests:
           - not_null
@@ -27,5 +23,11 @@ models:
         tests:
           - not_null
       - name: BI_UPDATED_AT
+        tests:
+          - not_null
+      - name: SOURCE_UPDATED_AT
+        tests:
+          - not_null
+      - name: AIRBYTE_EXTRACTED_AT
         tests:
           - not_null
