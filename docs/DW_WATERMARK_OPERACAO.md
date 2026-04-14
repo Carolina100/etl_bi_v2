@@ -1,13 +1,17 @@
 # Operacao de Watermark no DW
 
-Este documento descreve como operar o fluxo `DS -> DW` usando watermark na tabela `SOLIX_BI.DS.CTL_PIPELINE_WATERMARK`.
+Este documento descreve como operar a tabela `SOLIX_BI.DS.CTL_PIPELINE_WATERMARK` no fluxo fim a fim.
 
-O piloto atual e a dimensao `dim_sx_estado_d`.
+Os pilotos atuais sao:
+
+- `dim_sx_estado_d`
+- `dim_sx_equipamento_d`
 
 ## Objetivo
 
 Usar a tabela de controle para:
 
+- registrar o inicio e o fim da extracao upstream
 - executar incremental normal sem lookback arbitrario
 - permitir reprocessamento parcial por data
 - permitir reconstrucao total com `full-refresh`
@@ -23,15 +27,49 @@ Coluna principal de watermark no fluxo `DS -> DW`:
 
 - `LAST_BI_UPDATED_AT`
 
-Para a dimensao `SX_ESTADO_D`, o pipeline registrado e:
+Para as dimensoes atuais, os pipelines registrados sao:
 
 - `PIPELINE_NAME = 'dim_sx_estado_d'`
+- `PIPELINE_NAME = 'dim_sx_equipamento_d'`
 
-## Regra de watermark
+Convencao de chave:
 
-O modelo `dim_sx_estado_d` usa:
+- pipeline global:
+  - `PIPELINE_NAME`
+  - `ID_CLIENTE = 0`
+- pipeline por cliente:
+  - `PIPELINE_NAME + ID_CLIENTE`
 
-- `BI_UPDATED_AT` vindo da `stg_ds__sx_estado_d`
+## Responsabilidade por coluna
+
+Metadados de extracao:
+
+- `LAST_EXTRACT_STARTED_AT`
+- `LAST_EXTRACT_ENDED_AT`
+
+Responsavel sugerido:
+
+- Airflow / orquestrador da ingestao
+
+Metadados da carga `DS -> DW`:
+
+- `LAST_BI_UPDATED_AT`
+- `LAST_SUCCESS_BATCH_ID`
+- `LAST_LOAD_MODE`
+- `LAST_RUN_BATCH_ID`
+- `LAST_RUN_STARTED_AT`
+- `LAST_RUN_COMMITTED_AT`
+- `UPDATED_AT`
+
+Responsavel:
+
+- dbt
+
+## Regra de watermark no dbt
+
+Os modelos dimensionais usam:
+
+- `BI_UPDATED_AT` vindo do staging `DS -> DW`
 
 Regra:
 
@@ -51,6 +89,37 @@ Ao final da execucao com sucesso, o modelo atualiza a `CTL_PIPELINE_WATERMARK` c
 - `LAST_RUN_STARTED_AT`
 - `LAST_RUN_COMMITTED_AT`
 - `UPDATED_AT`
+
+## Regra de extracao upstream
+
+O Airbyte nao precisa escrever diretamente na `CTL_PIPELINE_WATERMARK`.
+
+O desenho recomendado e:
+
+1. o Airflow dispara a extracao
+2. o Airflow grava `LAST_EXTRACT_STARTED_AT`
+3. o Airflow aguarda a conclusao da extracao
+4. o Airflow grava `LAST_EXTRACT_ENDED_AT`
+5. depois o dbt executa a carga `DS -> DW`
+
+Scripts padrao criados no repositorio:
+
+- [merge_ctl_pipeline_watermark_extract_start.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi_v2/sql/control/merge_ctl_pipeline_watermark_extract_start.sql)
+- [merge_ctl_pipeline_watermark_extract_end.sql](/c:/Users/CarolinaIovanceGolfi/Desktop/etl_bi_v2/sql/control/merge_ctl_pipeline_watermark_extract_end.sql)
+
+Uso:
+
+- substituir `<PIPELINE_NAME>`
+- substituir `<ID_CLIENTE>`
+
+Exemplos:
+
+- pipeline global `sx_estado`:
+  - `PIPELINE_NAME = 'dim_sx_estado_d'`
+  - `ID_CLIENTE = 0`
+- pipeline por cliente `sx_equipamento`:
+  - `PIPELINE_NAME = 'dim_sx_equipamento_d'`
+  - `ID_CLIENTE = 7`
 
 ## Pre-requisito
 
@@ -131,6 +200,8 @@ update SOLIX_BI.DS.CTL_PIPELINE_WATERMARK
 set LAST_BI_UPDATED_AT = null,
     LAST_SUCCESS_BATCH_ID = null,
     LAST_LOAD_MODE = 'MANUAL_RESET',
+    LAST_EXTRACT_STARTED_AT = null,
+    LAST_EXTRACT_ENDED_AT = null,
     LAST_RUN_BATCH_ID = null,
     LAST_RUN_STARTED_AT = null,
     LAST_RUN_COMMITTED_AT = null,

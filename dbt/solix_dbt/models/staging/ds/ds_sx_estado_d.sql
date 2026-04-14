@@ -2,46 +2,50 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  MODELO DS — RAW → DS (incremental por merge)                               ║
 ║                                                                              ║
-║  PARA REUTILIZAR PARA OUTRA TABELA, ALTERE APENAS AS VARIAVEIS ABAIXO       ║
-║  MARCADAS COM OS NUMEROS (1) A (6).                                          ║
-║  O restante do modelo NAO precisa ser tocado.                                ║
+║  ENTIDADE SIMPLES / CURRENT STATE                                            ║
+║                                                                              ║
+║  QUANDO REUTILIZAR ESTE MODELO PARA OUTRA ENTIDADE SIMPLES, AJUSTE:         ║
+║  1. BLOCO DE CONFIGURACAO                                                    ║
+║  2. CTE base_entity_stage / latest                                           ║
+║  3. COMPARACAO em changed_or_new                                             ║
+║                                                                              ║
+║  O QUE ESTE MODELO FAZ                                                       ║
+║  - le uma unica tabela RAW                                                   ║
+║  - calcula a ultima versao por chave natural                                 ║
+║  - mantem 1 linha por chave natural no DS                                    ║
+║  - suporta current-state com soft delete quando houver FG_ATIVO              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 #}
 
--- ═══════════════════════════════════════════════════════════════════════════
--- BLOCO DE CONFIGURAÇÃO — ALTERE SÓ AQUI AO REUTILIZAR PARA OUTRA TABELA
--- ═══════════════════════════════════════════════════════════════════════════
+-- ============================================================================
+-- BLOCO DE CONFIGURACAO — AJUSTE SO AQUI PARA REUSO
+-- ============================================================================
 
-{# (1) Nome da tabela no RAW. Exemplo: RAW.CDT_ESTADO → sufixo = 'CDT_ESTADO' #}
-{% set ENTITY_RAW_TABLE = 'CDT_ESTADO' %}
-
-{# (2) Nome da tabela destino que será criada/atualizada no schema DS #}
+-- Nome final da tabela no schema DS
 {% set MODEL_ALIAS = 'SX_ESTADO_D' %}
 
-{# (3) Colunas que identificam unicamente um registro (chave para o merge) #}
+-- Chave natural da entidade no DS
 {% set NATURAL_KEY_COLUMNS = ['CD_ESTADO'] %}
 
-{# (4) Coluna de data de atualização da origem — usada como cursor pelo Airbyte #}
-{% set SOURCE_UPDATED_AT_COLUMN = 'dt_updated' %}
+-- Tabela RAW da entidade
+{% set BASE_RAW_TABLE = 'SOLIX_BI.RAW.CDT_ESTADO' %}
 
-{# (5) A tabela de origem possui flag de ativo/inativo?
-       true  → lê a coluna da origem e propaga para o DS (dimensões por cliente)
-       false → dimensão global/compartilhada, sem flag; FG_ATIVO sempre = 1 #}
+-- Coluna de data de atualizacao da origem
+{% set SOURCE_UPDATED_AT_COLUMN = 'DT_UPDATED' %}
+
+-- A entidade possui FG_ATIVO na origem?
+-- false = entidade global/compartilhada sem delete logico explicito
 {% set HAS_FG_ATIVO = false %}
 
-{# (6) [Só preencher se HAS_FG_ATIVO = true] Nome da coluna de flag na origem #}
+-- Nome da coluna de flag na origem, caso exista
 {% set FG_ATIVO_COLUMN = 'FG_ATIVO' %}
 
--- ═══════════════════════════════════════════════════════════════════════════
--- CONFIGURAÇÃO DO MODELO dbt (não alterar)
--- ═══════════════════════════════════════════════════════════════════════════
-
-{% set TARGET_SCHEMA = 'DS' %}
-{% set BATCH_ID      = invocation_id %}
+-- Batch tecnico do dbt
+{% set BATCH_ID = invocation_id %}
 
 {{ config(
     materialized='incremental',
-    schema=TARGET_SCHEMA,
+    schema='DS',
     alias=MODEL_ALIAS,
     incremental_strategy='merge',
     unique_key=NATURAL_KEY_COLUMNS,
@@ -49,45 +53,28 @@
     tags=['ds', 'incremental', MODEL_ALIAS | lower]
 ) }}
 
+-- ============================================================================
+-- PASSO 1 — LEITURA E DEDUPLICACAO DA TABELA DIRIGENTE
+-- Nesta entidade a propria tabela RAW e a verdade do cadastro.
+-- ============================================================================
 
--- ═══════════════════════════════════════════════════════════════════════════
--- PASSO 1 — LEITURA DO RAW
--- Lê diretamente a tabela RAW da entidade. Sem UNION ALL, sem CTL de conexões.
--- Esta entidade é global e não possui segregação por cliente.
--- O FG_ATIVO da origem é lido aqui e propagado para o DS quando existir.
---
--- ⚠️  Ajuste as colunas do SELECT abaixo para refletir a entidade:
---     - Mantenha FG_ATIVO, SOURCE_UPDATED_AT e AIRBYTE_EXTRACTED_AT
---     - Altere as colunas do meio para as colunas de negócio da tabela RAW
--- ═══════════════════════════════════════════════════════════════════════════
-
-with staged_airbyte as (
+with base_entity_stage as (
     select
-        -- ▼ Colunas de negócio da entidade (alterar conforme a tabela)
-        cast(CD_ESTADO                      as varchar)         as CD_ESTADO,
-        cast(DESC_ESTADO                    as varchar)         as DESC_ESTADO,
-        -- ▲ Fim das colunas de negócio
-        -- FG_ATIVO: lido da origem se HAS_FG_ATIVO=true; caso contrário, sempre ativo
+        cast(CD_ESTADO as varchar) as CD_ESTADO,
+        cast(DESC_ESTADO as varchar) as DESC_ESTADO,
         {% if HAS_FG_ATIVO %}
-        cast({{ FG_ATIVO_COLUMN }}          as number(1, 0))   as FG_ATIVO,
+        cast({{ FG_ATIVO_COLUMN }} as number(1, 0)) as FG_ATIVO,
         {% else %}
-        cast(1                              as number(1, 0))   as FG_ATIVO,  -- global: sem flag
+        cast(1 as number(1, 0)) as FG_ATIVO,
         {% endif %}
-        cast({{ SOURCE_UPDATED_AT_COLUMN }} as timestamp_ntz)  as SOURCE_UPDATED_AT,
-        cast(_AIRBYTE_EXTRACTED_AT          as timestamp_ntz)  as AIRBYTE_EXTRACTED_AT
-    from SOLIX_BI.RAW.{{ ENTITY_RAW_TABLE }}
+        cast({{ SOURCE_UPDATED_AT_COLUMN }} as timestamp_ntz) as SOURCE_UPDATED_AT,
+        cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
+    from {{ BASE_RAW_TABLE }}
 ),
 
-
--- ═══════════════════════════════════════════════════════════════════════════
--- PASSO 2 — DEDUPLICAÇÃO
--- Garante uma única linha por chave natural, pegando a versão mais recente.
--- Cobre o caso de re-entrega pelo Airbyte (ex: recargas, sobreposição de cursor).
--- ═══════════════════════════════════════════════════════════════════════════
-
-latest_stage as (
+base_entity_latest as (
     select *
-    from staged_airbyte
+    from base_entity_stage
     qualify row_number() over (
         partition by CD_ESTADO
         order by SOURCE_UPDATED_AT desc nulls last,
@@ -95,12 +82,10 @@ latest_stage as (
     ) = 1
 ),
 
-
--- ═══════════════════════════════════════════════════════════════════════════
--- PASSO 3 — ESTADO ATUAL DA TABELA DS
--- Lê o que já existe no DS para comparar com o que veio do RAW.
--- Na primeira execução (full-refresh) a tabela ainda não existe → vazio.
--- ═══════════════════════════════════════════════════════════════════════════
+-- ============================================================================
+-- PASSO 2 — ESTADO ATUAL DA TABELA DS
+-- Usado para identificar apenas inserts ou updates necessarios.
+-- ============================================================================
 
 current_target as (
     {% if is_incremental() %}
@@ -116,33 +101,26 @@ current_target as (
     from {{ this }}
     {% else %}
     select
-        cast(null as varchar)        as CD_ESTADO,
-        cast(null as varchar)        as DESC_ESTADO,
-        cast(null as number(1, 0))   as FG_ATIVO,
-        cast(null as varchar)        as ETL_BATCH_ID,
-        cast(null as timestamp_ntz)  as BI_CREATED_AT,
-        cast(null as timestamp_ntz)  as BI_UPDATED_AT,
-        cast(null as timestamp_ntz)  as SOURCE_UPDATED_AT,
-        cast(null as timestamp_ntz)  as AIRBYTE_EXTRACTED_AT
+        cast(null as varchar) as CD_ESTADO,
+        cast(null as varchar) as DESC_ESTADO,
+        cast(null as number(1, 0)) as FG_ATIVO,
+        cast(null as varchar) as ETL_BATCH_ID,
+        cast(null as timestamp_ntz) as BI_CREATED_AT,
+        cast(null as timestamp_ntz) as BI_UPDATED_AT,
+        cast(null as timestamp_ntz) as SOURCE_UPDATED_AT,
+        cast(null as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     where 1 = 0
     {% endif %}
 ),
 
-
--- ═══════════════════════════════════════════════════════════════════════════
--- PASSO 4 — LINHAS NOVAS OU ALTERADAS
--- Compara o RAW (latest_stage) com o DS atual (current_target) e seleciona:
---   • Registros novos (não existem no DS ainda)
---   • Registros alterados (qualquer coluna de negócio mudou)
---   • Registros cujo status ativo/inativo mudou na origem (soft delete)
---
--- REGRAS IMPORTANTES:
---   • FG_ATIVO vem sempre da origem, nunca hardcoded
---   • BI_CREATED_AT é preservado do INSERT original e nunca sobrescrito
---   • BI_UPDATED_AT só muda quando há mudança real de negócio
---   • AIRBYTE_EXTRACTED_AT não entra no critério de mudança — é metadado
---     de extração e muda a cada run mesmo sem alteração de dado
--- ═══════════════════════════════════════════════════════════════════════════
+-- ============================================================================
+-- PASSO 3 — DETECCAO DE NOVOS OU ALTERADOS
+-- REGRAS:
+-- - registro novo -> insert
+-- - registro existente alterado -> update
+-- - BI_CREATED_AT e preservado
+-- - BI_UPDATED_AT so muda quando houve alteracao real
+-- ============================================================================
 
 changed_or_new as (
     select
@@ -150,43 +128,35 @@ changed_or_new as (
         s.DESC_ESTADO,
         s.FG_ATIVO,
         cast('{{ BATCH_ID }}' as varchar) as ETL_BATCH_ID,
-
-        -- BI_CREATED_AT: preenche só na criação, preserva nas atualizações
         coalesce(
             t.BI_CREATED_AT,
             convert_timezone('UTC', current_timestamp())::timestamp_ntz
         ) as BI_CREATED_AT,
-
-        -- BI_UPDATED_AT: atualiza SOMENTE quando há mudança real de negócio
         case
             when t.CD_ESTADO is null
-                then convert_timezone('UTC', current_timestamp())::timestamp_ntz  -- novo registro
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
             when coalesce(t.DESC_ESTADO, '') <> coalesce(s.DESC_ESTADO, '')
-                then convert_timezone('UTC', current_timestamp())::timestamp_ntz  -- descricao mudou
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
             when coalesce(t.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
               <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
-                then convert_timezone('UTC', current_timestamp())::timestamp_ntz  -- origem atualizou
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
             {% if HAS_FG_ATIVO %}
             when coalesce(t.FG_ATIVO, 1) <> coalesce(s.FG_ATIVO, 1)
-                then convert_timezone('UTC', current_timestamp())::timestamp_ntz  -- status mudou
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
             {% endif %}
-            else t.BI_UPDATED_AT                                                  -- sem mudanca real
+            else t.BI_UPDATED_AT
         end as BI_UPDATED_AT,
-
         s.SOURCE_UPDATED_AT,
         s.AIRBYTE_EXTRACTED_AT
-
-    from latest_stage s
+    from base_entity_latest s
     left join current_target t
         on s.CD_ESTADO = t.CD_ESTADO
-
-    -- Filtra apenas o que realmente mudou para evitar writes desnecessários no DS
-    where t.CD_ESTADO is null                                                          -- novo
-       or coalesce(t.DESC_ESTADO, '')            <> coalesce(s.DESC_ESTADO, '')        -- dado mudou
+    where t.CD_ESTADO is null
+       or coalesce(t.DESC_ESTADO, '') <> coalesce(s.DESC_ESTADO, '')
        or coalesce(t.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
-         <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)                -- origem atualizou
+          <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
        {% if HAS_FG_ATIVO %}
-       or coalesce(t.FG_ATIVO, 1)               <> coalesce(s.FG_ATIVO, 1)            -- status mudou
+       or coalesce(t.FG_ATIVO, 1) <> coalesce(s.FG_ATIVO, 1)
        {% endif %}
 )
 

@@ -42,7 +42,6 @@
 {% set NATURAL_KEY_COLUMNS = ['CD_ESTADO'] %}
 {% set WATERMARK_PIPELINE_NAME = 'dim_sx_estado_d' %}
 {% set REPROCESS_FROM = var('dim_sx_estado_d_reprocess_from', none) %}
-{% set LOAD_MODE = 'FULL_REFRESH' if flags.FULL_REFRESH else ('REPROCESS_FROM_DATE' if REPROCESS_FROM else 'INCREMENTAL_WATERMARK') %}
 
 {{ config(
     materialized='incremental',
@@ -58,7 +57,16 @@
               '" ~ WATERMARK_PIPELINE_NAME ~ "' as PIPELINE_NAME,
               max(BI_UPDATED_AT) as LAST_BI_UPDATED_AT,
               '" ~ invocation_id ~ "' as LAST_SUCCESS_BATCH_ID,
-              '" ~ LOAD_MODE ~ "' as LAST_LOAD_MODE,
+              case
+                  -- Detecta full refresh em runtime pela linha orfa criada nesta execucao.
+                  when exists (
+                      select 1
+                      from {{ this }} orphan_probe
+                      where orphan_probe." ~ SURROGATE_KEY_COLUMN ~ " = -1
+                        and orphan_probe.ETL_BATCH_ID = '" ~ invocation_id ~ "'
+                  ) then 'FULL_REFRESH'
+                  " ~ ("when 1 = 1 then 'REPROCESS_FROM_DATE'" if REPROCESS_FROM else "else 'INCREMENTAL_WATERMARK'") ~ "
+              end as LAST_LOAD_MODE,
               '" ~ invocation_id ~ "' as LAST_RUN_BATCH_ID,
               convert_timezone('UTC', current_timestamp())::timestamp_ntz as LAST_RUN_STARTED_AT,
               convert_timezone('UTC', current_timestamp())::timestamp_ntz as LAST_RUN_COMMITTED_AT,
@@ -123,7 +131,7 @@ staged_source as (
     from {{ ref(STAGING_MODEL_NAME) }} s
     cross join watermark_control w
     where 1 = 1
-    {% if is_incremental() and not flags.FULL_REFRESH %}
+    {% if is_incremental() %}
       {% if REPROCESS_FROM %}
         and s.BI_UPDATED_AT >= '{{ REPROCESS_FROM }}'::timestamp_ntz
       {% else %}
@@ -176,10 +184,10 @@ orphan_row as (
         cast('UNDEFINED' as varchar) as DESC_ESTADO,
         -- ▲ Fim valores default
         cast(1 as number(1, 0)) as FG_ATIVO,
-        cast('DBT_ORPHAN_ROW' as varchar) as ETL_BATCH_ID,
+        cast('{{ invocation_id }}' as varchar) as ETL_BATCH_ID,
         convert_timezone('UTC', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('UTC', current_timestamp())::timestamp_ntz as BI_UPDATED_AT
-),    
+),
 
 final as (
     {% if is_incremental() %}
