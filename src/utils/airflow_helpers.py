@@ -107,35 +107,21 @@ def run_extract_watermark_event(
     if event_type not in {"start", "end"}:
         raise AirflowFailException(f"Tipo de evento de extracao invalido: {event_type}")
 
-    client_ids = (
-        id_clientes
-        if id_clientes is not None
-        else load_all_client_ids(
-            client_source_table=client_source_table,
-            client_id_column=client_id_column,
-            client_active_column=client_active_column,
-        )
-    )
-
     connection = None
     cursor = None
     try:
         connection = open_snowflake_connection()
         cursor = connection.cursor()
-
-        for id_cliente in client_ids:
-            cursor.execute(build_extract_watermark_merge_sql(
-                pipeline_name=pipeline_name,
-                id_cliente=int(id_cliente),
-                event_type=event_type,
-            ))
+        cursor.execute(build_extract_watermark_merge_sql(
+            pipeline_name=pipeline_name,
+            event_type=event_type,
+        ))
 
         connection.commit()
 
         return {
             "status": "SUCCESS",
             "pipeline_name": pipeline_name,
-            "id_clientes": client_ids,
             "event_type": event_type,
         }
     except Exception as exc:  # pragma: no cover - erro operacional
@@ -521,7 +507,7 @@ def load_all_client_ids(
         ))
         rows = cursor.fetchall()
         client_ids = [int(row[0]) for row in rows if row and row[0] is not None]
-        return client_ids or [0]
+        return client_ids
     except Exception as exc:  # pragma: no cover - erro operacional
         raise AirflowFailException(
             f"Falha ao carregar clientes para watermark. "
@@ -712,7 +698,6 @@ def parse_airbyte_cloud_job_details(payload: dict[str, Any]) -> dict[str, Any]:
 def build_extract_watermark_merge_sql(
     *,
     pipeline_name: str,
-    id_cliente: int,
     event_type: str,
 ) -> str:
     timestamp_column = (
@@ -726,23 +711,19 @@ merge into SOLIX_BI.DS.CTL_PIPELINE_WATERMARK as tgt
 using (
     select
         '{escaped_pipeline_name}' as PIPELINE_NAME,
-        {id_cliente} as ID_CLIENTE,
         convert_timezone('UTC', current_timestamp())::timestamp_ntz as {timestamp_column},
         convert_timezone('UTC', current_timestamp())::timestamp_ntz as UPDATED_AT
 ) as src
 on tgt.PIPELINE_NAME = src.PIPELINE_NAME
-and tgt.ID_CLIENTE = src.ID_CLIENTE
 when matched then update set
     tgt.{timestamp_column} = src.{timestamp_column},
     tgt.UPDATED_AT = src.UPDATED_AT
 when not matched then insert (
     PIPELINE_NAME,
-    ID_CLIENTE,
     {timestamp_column},
     UPDATED_AT
 ) values (
     src.PIPELINE_NAME,
-    src.ID_CLIENTE,
     src.{timestamp_column},
     src.UPDATED_AT
 )

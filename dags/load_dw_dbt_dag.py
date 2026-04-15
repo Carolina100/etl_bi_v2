@@ -246,11 +246,17 @@ def resolve_client_ids(dag_conf: dict[str, Any], params: dict[str, Any]) -> list
     client_id_column = str(dag_conf.get("watermark_client_id_column") or params.get("watermark_client_id_column") or "ID_CLIENTE")
     client_active_column = dag_conf.get("watermark_client_active_column") or params.get("watermark_client_active_column")
 
-    return load_all_client_ids(
+    client_ids = load_all_client_ids(
         client_source_table=client_source_table,
         client_id_column=client_id_column,
         client_active_column=client_active_column,
     )
+    if not client_ids:
+        raise AirflowFailException(
+            "Nenhum cliente encontrado para processamento do dbt. "
+            f"table={client_source_table} coluna={client_id_column}"
+        )
+    return client_ids
 
 
 def parse_string_list(raw_value: Any) -> list[str]:

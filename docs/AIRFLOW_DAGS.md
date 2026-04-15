@@ -16,7 +16,7 @@ O desenho atual e:
 - [schedule_sx_estado_d_incremental_dag.py](../dags/schedule_sx_estado_d_incremental_dag.py)
 - [schedule_sx_estado_d_full_dag.py](../dags/schedule_sx_estado_d_full_dag.py)
 - [schedule_sx_equipamento_d_incremental_dag.py](../dags/schedule_sx_equipamento_d_incremental_dag.py)
-- [schedule_sx_equipamento_d_full_dag.py](../dags/schedule_sx_equipamento_d_full_dag.py)
+- [reproc_sx_equipamento_d_dag.py](../dags/reproc_sx_equipamento_d_dag.py)
 
 ## O que a DAG faz
 
@@ -29,14 +29,20 @@ As DAGs principais ficaram separadas por produto:
 
 - `load_dw_dbt_dag`
   1. executa `dbt build` no projeto `dbt/solix_dbt`
-  2. pode rodar modelos compartilhados uma vez
-  3. pode rodar modelos por cliente, continuando os demais mesmo com falha pontual
+  2. roda os modelos informados no `conf`
+  3. usa o watermark do proprio modelo para fazer incremental
 
 - `orchestrate_ds_dw_dag`
   1. dispara `load_ds_airbyte_dag`
   2. aguarda conclusao com sucesso
   3. dispara `load_dw_dbt_dag`
   4. aguarda conclusao com sucesso
+
+Para `sx_equipamento`, o desenho de producao atual e:
+
+- `Airbyte -> RAW`: global
+- `RAW -> DS`: global
+- `DS -> DW`: global
 
 As DAGs de agendamento foram preparadas para:
 
@@ -62,8 +68,6 @@ Campos suportados:
 
 - `models`
   - lista de modelos dbt ou string separada por virgula
-- `client_models`
-  - lista de modelos dbt que devem rodar cliente a cliente
 - `airbyte_connection_id`
   - `connection_id` da conexao Airbyte a ser sincronizada
 - `wait_for_airbyte`
@@ -80,14 +84,12 @@ Campos suportados:
 - `full_refresh`
   - `true` ou `false`
   - quando `true`, executa o dbt com `--full-refresh`
-- `continue_on_client_error`
-  - `true` ou `false`
-  - quando `true`, continua processando os demais clientes mesmo que um cliente falhe
 - `watermark_pipeline_name`
   - nome do pipeline na `CTL_PIPELINE_WATERMARK`
 - `watermark_id_clientes`
   - lista de clientes afetados pela extracao
-  - usar `[0]` para pipeline global
+  - opcional
+  - para pipelines globais, pode ser omitido
 - `watermark_client_source_table`
   - tabela usada para buscar todos os clientes quando `watermark_id_clientes` nao for informado
 - `watermark_client_id_column`
@@ -180,7 +182,7 @@ Para Airbyte Cloud, o runtime do Airflow tambem precisa conhecer:
 - usar `schedule_sx_estado_d_incremental_dag` para o agendamento frequente
 - usar `schedule_sx_estado_d_full_dag` para a reconciliacao diaria
 - usar `schedule_sx_equipamento_d_incremental_dag` para o agendamento frequente do equipamento
-- usar `schedule_sx_equipamento_d_full_dag` para a reconciliacao do equipamento
+- usar `reproc_sx_equipamento_d_dag` para reprocessamento manual do equipamento
 
 ## Modelo operacional recomendado
 
@@ -199,8 +201,9 @@ Para Airbyte Cloud, o runtime do Airflow tambem precisa conhecer:
   - agenda a rotina full de reconciliacao
 - `schedule_sx_equipamento_d_incremental_dag`
   - agenda a rotina incremental do equipamento
-- `schedule_sx_equipamento_d_full_dag`
-  - agenda a rotina full de reconciliacao do equipamento
+- `reproc_sx_equipamento_d_dag`
+  - DAG manual para reprocessamento do equipamento
+  - executa reprocessamento full global do equipamento
 
 ## Pools recomendados
 
@@ -208,7 +211,7 @@ Para producao, criar estes pools no Airflow:
 
 - `airbyte_sync_pool`
   - usado na task `sync_ds_airbyte`
-  - recomendacao inicial: `1` ou `2` slots
+  - recomendacao inicial: `1` slot quando houver uma unica `connection_id` por entidade
 - `dbt_build_pool`
   - usado na task `run_dw_dbt`
   - recomendacao inicial: `2` a `4` slots, conforme capacidade do warehouse
@@ -239,63 +242,23 @@ Esse desenho preserva a separacao de responsabilidade:
 - dbt
   - metadados de transformacao e carga
 
-## Regra de clientes para pipelines por cliente
-
-Para pipelines segregados por cliente, a regra recomendada e:
-
-- se `watermark_id_clientes` for informado:
-  - a DAG registra extract start/end apenas para os clientes informados
-- se `watermark_id_clientes` nao for informado:
-  - a DAG busca todos os clientes na tabela configurada em `watermark_client_source_table`
-  - e registra extract start/end para todos eles
-
-Exemplo adotado para `sx_equipamento`:
-
-- `watermark_pipeline_name = 'dim_sx_equipamento_d'`
-- `watermark_id_clientes = null`
-- `watermark_client_source_table = 'SOLIX_BI.DS.SX_CLIENTE_D'`
-- `watermark_client_id_column = 'ID_CLIENTE'`
-- `watermark_client_active_column = 'FL_ATIVO'`
-
-## Reprocessamento manual por cliente e data
+## Reprocessamento manual do equipamento
 
 Para `sx_equipamento`, o desenho recomendado e:
 
-- se nao informar `watermark_id_clientes`
-  - a extracao registra todos os clientes ativos
-- se informar `watermark_id_clientes`
-  - a extracao registra apenas os clientes desejados
-- se nao informar data de reprocessamento
-  - o dbt roda incremental normal
-- se informar data de reprocessamento
-  - o dbt reprocessa a partir da data informada
-- no modo atual de producao do equipamento
-  - `DS -> STG -> DIM` rodam por cliente
-  - o Airbyte continua rodando uma vez por tabela/connection
-  - se um cliente falhar no dbt, os demais continuam e a falha fica auditada
+- a DAG reprocessa globalmente o equipamento
+- executa dbt com `--full-refresh`
+- relê todo o dado disponivel no `RAW`
+- o equipamento segue o legado com `DS -> DW` global no fluxo operacional
+- o watermark operacional do pipeline e global por `PIPELINE_NAME`
 
-Exemplo manual para reprocessar apenas o cliente `7` desde `2026-04-01 00:00:00`:
+Exemplo manual:
 
 ```json
-{
-  "airbyte_connection_id": "404f8969-e421-416e-96f6-cd0434047acf",
-  "models": [],
-  "client_models": ["ds_sx_equipamento_d", "stg_ds__sx_equipamento_d", "dim_sx_equipamento_d"],
-  "reconciliation_mode": "incremental",
-  "full_refresh": false,
-  "continue_on_client_error": true,
-  "dbt_vars": {
-    "dim_sx_equipamento_d_reprocess_from": "2026-04-01 00:00:00"
-  },
-  "watermark_pipeline_name": "dim_sx_equipamento_d",
-  "watermark_id_clientes": [7],
-  "watermark_client_source_table": "SOLIX_BI.DS.SX_CLIENTE_D",
-  "watermark_client_id_column": "ID_CLIENTE",
-  "watermark_client_active_column": "FL_ATIVO",
-  "airbyte_timeout_seconds": 3600,
-  "airbyte_poll_interval_seconds": 15
-}
+{}
 ```
+
+Essa DAG nao usa filtro por cliente nem data. O objetivo dela e reconstruir o pipeline completo do equipamento a partir do `RAW`.
 
 ## Limites de responsabilidade
 

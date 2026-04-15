@@ -16,7 +16,8 @@
 ║  - enriquece com tabelas complementares                                      ║
 ║  - calcula SOURCE_UPDATED_AT pela maior data entre as fontes                 ║
 ║  - mantem 1 linha por chave natural no DS                                    ║
-║  - trata soft delete atualizando a mesma linha                               ║
+║  - trata inativacao como update da mesma linha                               ║
+║  - nao faz delete fisico da entidade                                         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 #}
 
@@ -73,18 +74,18 @@ with base_entity_stage as (
         cast(CD_TP_EQUIPAMENTO as number(38, 0)) as CD_TIPO_EQUIPAMENTO,
         cast(TP_USO_EQUIPAMENTO as number(38, 0)) as TP_USO_EQUIPAMENTO,
         case
-            when upper(cast(FG_ATIVO as varchar)) = 'TRUE' then 1
-            when upper(cast(FG_ATIVO as varchar)) = 'FALSE' then 0
-            else try_to_number(cast(FG_ATIVO as varchar))
+            when upper(cast(FG_ATIVO as varchar)) = 'TRUE' then true
+            when upper(cast(FG_ATIVO as varchar)) = 'FALSE' then false
+            else try_to_boolean(cast(FG_ATIVO as varchar))
         end as FG_ATIVO,
         cast(DT_UPDATED as timestamp_ntz) as DT_UPDATED,
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ BASE_RAW_TABLE }}
     where CD_TP_EQUIPAMENTO in {{ EQUIPAMENTO_TYPE_FILTER }}
     {% if FILTER_ID_CLIENTE is not none %}
-      and CD_CLIENTE = {{ FILTER_ID_CLIENTE }}
+      and cast(CD_CLIENTE as number(38, 0)) = {{ FILTER_ID_CLIENTE }}
     {% endif %}
-), 
+),
 
 base_entity_latest as (
     select *
@@ -110,7 +111,7 @@ modelo_stage as (
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ MODELO_RAW_TABLE }}
     {% if FILTER_ID_CLIENTE is not none %}
-    where CD_CLIENTE = {{ FILTER_ID_CLIENTE }}
+    where cast(CD_CLIENTE as number(38, 0)) = {{ FILTER_ID_CLIENTE }}
     {% endif %}
 ),
 
@@ -133,7 +134,7 @@ tipo_stage as (
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ TIPO_RAW_TABLE }}
     {% if FILTER_ID_CLIENTE is not none %}
-    where CD_CLIENTE = {{ FILTER_ID_CLIENTE }}
+    where cast(CD_CLIENTE as number(38, 0)) = {{ FILTER_ID_CLIENTE }}
     {% endif %}
 ),
 
@@ -161,7 +162,7 @@ status_history_stage as (
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ STATUS_RAW_TABLE }}
     {% if FILTER_ID_CLIENTE is not none %}
-    where CD_CLIENTE = {{ FILTER_ID_CLIENTE }}
+    where cast(CD_CLIENTE as number(38, 0)) = {{ FILTER_ID_CLIENTE }}
     {% endif %}
 ),
 
@@ -201,8 +202,11 @@ status_latest as (
 -- Aqui concentramos a regra de negocio da entidade final no DS.
 -- REGRAS:
 -- - FG_ATIVO sempre vem da tabela dirigente
+-- - FG_ATIVO e o atributo que determina nossa logica de current-state
 -- - tabelas auxiliares apenas enriquecem atributos
+-- - DESC_STATUS e atributo de negocio independente, derivado da logica propria
 -- - SOURCE_UPDATED_AT e calculado pela maior data entre as fontes
+-- - quando a origem inativa o equipamento, a mesma linha e atualizada
 -- ============================================================================
 
 consolidated_source as (
@@ -266,9 +270,6 @@ current_target as (
         SOURCE_UPDATED_AT,
         AIRBYTE_EXTRACTED_AT
     from {{ this }}
-    {% if FILTER_ID_CLIENTE is not none %}
-    where ID_CLIENTE = {{ FILTER_ID_CLIENTE }}
-    {% endif %}
     {% else %}
     select
         cast(null as number(38, 0)) as ID_CLIENTE,
@@ -280,7 +281,7 @@ current_target as (
         cast(null as varchar) as DESC_TIPO_EQUIPAMENTO,
         cast(null as varchar) as DESC_STATUS,
         cast(null as number(38, 0)) as TP_USO_EQUIPAMENTO,
-        cast(null as number(1, 0)) as FG_ATIVO,
+        cast(null as boolean) as FG_ATIVO,
         cast(null as varchar) as ETL_BATCH_ID,
         cast(null as timestamp_ntz) as BI_CREATED_AT,
         cast(null as timestamp_ntz) as BI_UPDATED_AT,
@@ -295,8 +296,9 @@ current_target as (
 -- REGRAS:
 -- - ativo e nao existe -> insert
 -- - ativo e existe -> update se houve mudanca
--- - inativo e existe -> update da mesma linha
+-- - inativo e existe -> update da mesma linha para inativo
 -- - inativo e nao existe -> ignorar
+-- - a mudanca de estado do registro e determinada por FG_ATIVO
 -- ============================================================================
 
 changed_or_new as (
@@ -333,10 +335,13 @@ changed_or_new as (
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
             when coalesce(t.TP_USO_EQUIPAMENTO, -999) <> coalesce(s.TP_USO_EQUIPAMENTO, -999)
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.FG_ATIVO, 1) <> coalesce(s.FG_ATIVO, 1)
+            when coalesce(t.FG_ATIVO, false) <> coalesce(s.FG_ATIVO, false)
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
             when coalesce(t.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
               <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
+                then convert_timezone('UTC', current_timestamp())::timestamp_ntz
+            when coalesce(t.AIRBYTE_EXTRACTED_AT, '1900-01-01'::timestamp_ntz)
+              <> coalesce(s.AIRBYTE_EXTRACTED_AT, '1900-01-01'::timestamp_ntz)
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
             else t.BI_UPDATED_AT
         end as BI_UPDATED_AT,
@@ -349,7 +354,7 @@ changed_or_new as (
     where
         (
             t.ID_CLIENTE is null
-            and coalesce(s.FG_ATIVO, 1) = 1
+            and coalesce(s.FG_ATIVO, true) = true
         )
         or (
             t.ID_CLIENTE is not null
@@ -361,9 +366,11 @@ changed_or_new as (
                 or coalesce(t.DESC_TIPO_EQUIPAMENTO, '') <> coalesce(s.DESC_TIPO_EQUIPAMENTO, '')
                 or coalesce(t.DESC_STATUS, '') <> coalesce(s.DESC_STATUS, '')
                 or coalesce(t.TP_USO_EQUIPAMENTO, -999) <> coalesce(s.TP_USO_EQUIPAMENTO, -999)
-                or coalesce(t.FG_ATIVO, 1) <> coalesce(s.FG_ATIVO, 1)
+                or coalesce(t.FG_ATIVO, false) <> coalesce(s.FG_ATIVO, false)
                 or coalesce(t.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
                    <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
+                or coalesce(t.AIRBYTE_EXTRACTED_AT, '1900-01-01'::timestamp_ntz)
+                   <> coalesce(s.AIRBYTE_EXTRACTED_AT, '1900-01-01'::timestamp_ntz)
             )
         )
 )

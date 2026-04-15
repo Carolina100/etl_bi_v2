@@ -36,9 +36,6 @@ Convencao de chave:
 
 - pipeline global:
   - `PIPELINE_NAME`
-  - `ID_CLIENTE = 0`
-- pipeline por cliente:
-  - `PIPELINE_NAME + ID_CLIENTE`
 
 ## Responsabilidade por coluna
 
@@ -110,16 +107,13 @@ Scripts padrao criados no repositorio:
 Uso:
 
 - substituir `<PIPELINE_NAME>`
-- substituir `<ID_CLIENTE>`
 
 Exemplos:
 
 - pipeline global `sx_estado`:
   - `PIPELINE_NAME = 'dim_sx_estado_d'`
-  - `ID_CLIENTE = 0`
-- pipeline por cliente `sx_equipamento`:
+- pipeline global `sx_equipamento`:
   - `PIPELINE_NAME = 'dim_sx_equipamento_d'`
-  - `ID_CLIENTE = 7`
 
 ## Pre-requisito
 
@@ -207,7 +201,7 @@ set LAST_BI_UPDATED_AT = null,
     LAST_RUN_COMMITTED_AT = null,
     UPDATED_AT = convert_timezone('UTC', current_timestamp())::timestamp_ntz
 where PIPELINE_NAME = 'dim_sx_estado_d'
-  and ID_CLIENTE = 0;
+;
 ```
 
 Depois disso, a proxima execucao incremental processara tudo que existir no `DS` para o pipeline global da dimensao.
@@ -220,7 +214,7 @@ Consultar watermark atual:
 select *
 from SOLIX_BI.DS.CTL_PIPELINE_WATERMARK
 where PIPELINE_NAME = 'dim_sx_estado_d'
-  and ID_CLIENTE = 0;
+;
 ```
 
 Consultar registros do DW:

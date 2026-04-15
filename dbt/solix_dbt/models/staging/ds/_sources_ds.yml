@@ -9,21 +9,7 @@ sources:
       - name: sx_estado_d
         identifier: SX_ESTADO_D
         description: "Tabela DS curada da entidade SX_ESTADO_D, mantida por modelo incremental."
-      - name: sx_operacao_d
-        identifier: SX_OPERACAO_D
-        description: "Tabela DS da entidade SX_OPERACAO_D."
-      - name: sx_fazenda_d
-        identifier: SX_FAZENDA_D
-        description: "Tabela DS da entidade SX_FAZENDA_D."
       - name: sx_equipamento_d
         identifier: SX_EQUIPAMENTO_D
         description: "Tabela DS da entidade SX_EQUIPAMENTO_D."
-      - name: sx_frente_d
-        identifier: SX_FRENTE_D
-        description: "Tabela DS da entidade SX_FRENTE_D."
-      - name: sx_ordem_servico_d
-        identifier: SX_ORDEM_SERVICO_D
-        description: "Tabela DS da entidade SX_ORDEM_SERVICO_D."
-      - name: sx_detalhes_operacao_f
-        identifier: SX_DETALHES_OPERACAO_F
-        description: "Tabela DS da entidade SX_DETALHES_OPERACAO_F."
+

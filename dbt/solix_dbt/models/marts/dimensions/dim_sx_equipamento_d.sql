@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  MODELO DIMENSIONAL DW                                                      ║
 ║                                                                              ║
-║  DIMENSAO POR CLIENTE / CURRENT STATE                                        ║
+║  DIMENSAO GLOBAL / CURRENT STATE                                             ║
 ║                                                                              ║
 ║  QUANDO REUTILIZAR ESTE MODELO PARA OUTRA DIMENSAO, AJUSTE:                 ║
 ║  1. BLOCO DE CONFIGURACAO                                                    ║
@@ -17,7 +17,9 @@
 ║  - preserva a surrogate key em registros ja existentes                       ║
 ║  - usa sequence para novos registros                                         ║
 ║  - faz merge incremental pela chave natural                                  ║
-║  - controla watermark por PIPELINE_NAME + ID_CLIENTE                         ║
+║  - trata FG_ATIVO como atributo mutavel do current-state                     ║
+║  - nao faz delete fisico no DW                                               ║
+║  - controla watermark global por PIPELINE_NAME                               ║
 ║  - garante a existencia do registro orfao                                    ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 #}
@@ -60,7 +62,6 @@
       using (
           select
               '" ~ WATERMARK_PIPELINE_NAME ~ "' as PIPELINE_NAME,
-              ID_CLIENTE,
               max(BI_UPDATED_AT) as LAST_BI_UPDATED_AT,
               '" ~ invocation_id ~ "' as LAST_SUCCESS_BATCH_ID,
               case
@@ -79,11 +80,8 @@
               convert_timezone('UTC', current_timestamp())::timestamp_ntz as UPDATED_AT
           from {{ this }}
           where " ~ SURROGATE_KEY_COLUMN ~ " <> -1
-          " ~ ("and ID_CLIENTE = " ~ FILTER_ID_CLIENTE if FILTER_ID_CLIENTE is not none else "") ~ "
-          group by ID_CLIENTE
       ) as src
       on tgt.PIPELINE_NAME = src.PIPELINE_NAME
-     and tgt.ID_CLIENTE = src.ID_CLIENTE
       when matched then update set
           tgt.LAST_BI_UPDATED_AT = src.LAST_BI_UPDATED_AT,
           tgt.LAST_SUCCESS_BATCH_ID = src.LAST_SUCCESS_BATCH_ID,
@@ -94,7 +92,6 @@
           tgt.UPDATED_AT = src.UPDATED_AT
       when not matched then insert (
           PIPELINE_NAME,
-          ID_CLIENTE,
           LAST_BI_UPDATED_AT,
           LAST_SUCCESS_BATCH_ID,
           LAST_LOAD_MODE,
@@ -104,7 +101,6 @@
           UPDATED_AT
       ) values (
           src.PIPELINE_NAME,
-          src.ID_CLIENTE,
           src.LAST_BI_UPDATED_AT,
           src.LAST_SUCCESS_BATCH_ID,
           src.LAST_LOAD_MODE,
@@ -119,18 +115,15 @@
 ) }}
 
 -- ============================================================================
--- PASSO 1 — LEITURA DO WATERMARK POR CLIENTE
--- Esta dimensao e segregada por cliente, entao o controle e feito por
--- PIPELINE_NAME + ID_CLIENTE.
+-- PASSO 1 — LEITURA DO WATERMARK GLOBAL
+-- Esta dimensao segue o legado com controle global por PIPELINE_NAME.
 -- ============================================================================
 
 with watermark_control as (
     select
-        ID_CLIENTE,
-        max(LAST_BI_UPDATED_AT) as LAST_BI_UPDATED_AT
+        coalesce(max(LAST_BI_UPDATED_AT), '1900-01-01'::timestamp_ntz) as LAST_BI_UPDATED_AT
     from SOLIX_BI.DS.CTL_PIPELINE_WATERMARK
     where PIPELINE_NAME = '{{ WATERMARK_PIPELINE_NAME }}'
-    group by ID_CLIENTE
 ),
 
 -- ============================================================================
@@ -155,8 +148,7 @@ staged_source as (
         s.BI_CREATED_AT,
         s.BI_UPDATED_AT
     from {{ ref(STAGING_MODEL_NAME) }} s
-    left join watermark_control w
-        on s.ID_CLIENTE = w.ID_CLIENTE
+    cross join watermark_control w
     where 1 = 1
     {% if FILTER_ID_CLIENTE is not none %}
       and s.ID_CLIENTE = {{ FILTER_ID_CLIENTE }}
@@ -194,6 +186,8 @@ existing_dimension as (
 -- ============================================================================
 -- PASSO 4 — LINHAS DE NEGOCIO
 -- Aqui definimos exatamente como os atributos da dimensao serao populados.
+-- O merge final mantem uma unica linha por chave natural e atualiza FG_ATIVO
+-- quando a origem sinaliza inativacao.
 -- ============================================================================
 
 business_rows as (
@@ -235,7 +229,7 @@ orphan_row as (
         cast('UNDEFINED' as varchar) as DESC_TIPO_EQUIPAMENTO,
         cast('UNDEFINED' as varchar) as DESC_STATUS,
         cast(-1 as number(38, 0)) as TP_USO_EQUIPAMENTO,
-        cast(-1 as number(1, 0)) as FG_ATIVO,
+        cast(false as boolean) as FG_ATIVO,
         cast('{{ invocation_id }}' as varchar) as ETL_BATCH_ID,
         convert_timezone('UTC', current_timestamp())::timestamp_ntz as BI_CREATED_AT,
         convert_timezone('UTC', current_timestamp())::timestamp_ntz as BI_UPDATED_AT

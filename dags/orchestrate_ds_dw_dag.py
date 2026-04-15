@@ -94,6 +94,7 @@ with DAG(
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,
+    max_active_runs=1,
     tags=["orchestration", "airbyte", "dbt"],
     default_args={"email_on_failure": False, "email_on_retry": False, "retries": 0},
     params={

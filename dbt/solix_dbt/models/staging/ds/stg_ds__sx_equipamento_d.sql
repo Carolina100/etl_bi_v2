@@ -10,6 +10,7 @@
   - padronizar tipos
   - manter apenas a linha mais recente por chave natural
   - entregar um modelo limpo para a camada DW
+  - preservar o current-state sem delete fisico
 #}
 
 {% set SOURCE_TABLE_NAME = 'sx_equipamento_d' %}
@@ -50,7 +51,7 @@ typed_data as (
         cast(DESC_TIPO_EQUIPAMENTO as varchar) as DESC_TIPO_EQUIPAMENTO,
         cast(DESC_STATUS as varchar) as DESC_STATUS,
         cast(TP_USO_EQUIPAMENTO as number(38, 0)) as TP_USO_EQUIPAMENTO,
-        cast(FG_ATIVO as number(1, 0)) as FG_ATIVO,
+        cast(FG_ATIVO as boolean) as FG_ATIVO,
         cast(ETL_BATCH_ID as varchar) as ETL_BATCH_ID,
         cast(BI_CREATED_AT as timestamp_ntz) as BI_CREATED_AT,
         cast(BI_UPDATED_AT as timestamp_ntz) as BI_UPDATED_AT,
