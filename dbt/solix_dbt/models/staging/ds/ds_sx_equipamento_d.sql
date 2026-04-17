@@ -41,7 +41,6 @@
 
 -- Batch tecnico do dbt
 {% set BATCH_ID = invocation_id %}
-{% set FILTER_ID_CLIENTE = var('id_cliente', none) %}
 
 -- Filtro temporario de tipos aceitos.
 -- Se futuramente a regra for removida, elimine apenas o WHERE da base dirigente.
@@ -82,9 +81,6 @@ with base_entity_stage as (
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ BASE_RAW_TABLE }}
     where CD_TP_EQUIPAMENTO in {{ EQUIPAMENTO_TYPE_FILTER }}
-    {% if FILTER_ID_CLIENTE is not none %}
-      and cast(CD_CLIENTE as number(38, 0)) = {{ FILTER_ID_CLIENTE }}
-    {% endif %}
 ),
 
 base_entity_latest as (
@@ -110,9 +106,6 @@ modelo_stage as (
         cast(DT_UPDATED as timestamp_ntz) as DT_UPDATED,
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ MODELO_RAW_TABLE }}
-    {% if FILTER_ID_CLIENTE is not none %}
-    where cast(CD_CLIENTE as number(38, 0)) = {{ FILTER_ID_CLIENTE }}
-    {% endif %}
 ),
 
 modelo_latest as (
@@ -133,9 +126,6 @@ tipo_stage as (
         cast(DT_UPDATED as timestamp_ntz) as DT_UPDATED,
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ TIPO_RAW_TABLE }}
-    {% if FILTER_ID_CLIENTE is not none %}
-    where cast(CD_CLIENTE as number(38, 0)) = {{ FILTER_ID_CLIENTE }}
-    {% endif %}
 ),
 
 tipo_latest as (
@@ -161,9 +151,6 @@ status_history_stage as (
         cast(DT_UPDATED as timestamp_ntz) as DT_UPDATED,
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ STATUS_RAW_TABLE }}
-    {% if FILTER_ID_CLIENTE is not none %}
-    where cast(CD_CLIENTE as number(38, 0)) = {{ FILTER_ID_CLIENTE }}
-    {% endif %}
 ),
 
 status_last_event as (

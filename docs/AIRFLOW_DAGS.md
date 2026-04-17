@@ -4,39 +4,44 @@ Este projeto usa Airflow como orquestrador da etapa analitica do pipeline.
 
 O desenho atual e:
 
-- uma DAG executa o Airbyte para `DS`
-- uma DAG executa o dbt para `DW`
+- uma DAG executa o Airbyte para `RAW`
+- uma DAG executa o dbt para `DS -> DW`
 - uma DAG orquestradora encadeia as duas quando o fluxo precisa ser fim a fim
+- uma DAG separada faz a retencao tecnica do `DS`
 
 ## DAG principal
 
-- [load_ds_airbyte_dag.py](../dags/load_ds_airbyte_dag.py)
-- [load_dw_dbt_dag.py](../dags/load_dw_dbt_dag.py)
-- [orchestrate_ds_dw_dag.py](../dags/orchestrate_ds_dw_dag.py)
-- [schedule_sx_estado_d_incremental_dag.py](../dags/schedule_sx_estado_d_incremental_dag.py)
-- [schedule_sx_estado_d_full_dag.py](../dags/schedule_sx_estado_d_full_dag.py)
+- [load_ds_airbyte_dimensions_dag.py](../dags/load_ds_airbyte_dimensions_dag.py)
+- [load_dw_dbt_dimensions_dag.py](../dags/load_dw_dbt_dimensions_dag.py)
+- [orchestrate_ds_dw_dimensions_dag.py](../dags/orchestrate_ds_dw_dimensions_dag.py)
+- [cleanup_dimensions_retention_dag.py](../dags/cleanup_dimensions_retention_dag.py)
 - [schedule_sx_equipamento_d_incremental_dag.py](../dags/schedule_sx_equipamento_d_incremental_dag.py)
-- [reproc_sx_equipamento_d_dag.py](../dags/reproc_sx_equipamento_d_dag.py)
 
 ## O que a DAG faz
 
 As DAGs principais ficaram separadas por produto:
 
-- `load_ds_airbyte_dag`
+- `load_ds_airbyte_dimensions_dag`
   1. registra `LAST_EXTRACT_STARTED_AT`
   2. dispara a sync do Airbyte
   3. registra `LAST_EXTRACT_ENDED_AT`
 
-- `load_dw_dbt_dag`
+- `load_dw_dbt_dimensions_dag`
   1. executa `dbt build` no projeto `dbt/solix_dbt`
   2. roda os modelos informados no `conf`
   3. usa o watermark do proprio modelo para fazer incremental
 
-- `orchestrate_ds_dw_dag`
-  1. dispara `load_ds_airbyte_dag`
+- `orchestrate_ds_dw_dimensions_dag`
+  1. dispara `load_ds_airbyte_dimensions_dag`
   2. aguarda conclusao com sucesso
-  3. dispara `load_dw_dbt_dag`
+  3. dispara `load_dw_dbt_dimensions_dag`
   4. aguarda conclusao com sucesso
+  5. executa o cleanup tecnico do `RAW` da entidade, quando configurado
+
+- `cleanup_dimensions_retention_dag`
+  1. registra batch de cleanup
+  2. executa deletes tecnicos por tabela do `DS`
+  3. registra quantidade de linhas deletadas
 
 Para `sx_equipamento`, o desenho de producao atual e:
 
@@ -44,19 +49,26 @@ Para `sx_equipamento`, o desenho de producao atual e:
 - `RAW -> DS`: global
 - `DS -> DW`: global
 
+Decisao atual para custo e storage:
+
+- o `RAW` deve ser tratado como aterrissagem tecnica `TRANSIENT` no Snowflake
+- o `RAW` nao deve ser `TEMPORARY TABLE`
+- o `RAW` e limpo ao final da execucao bem-sucedida da entidade
+- a reducao de storage vem de cleanup tecnico, nao de `truncate`
+
 As DAGs de agendamento foram preparadas para:
 
 - disparar a DAG orquestradora com `conf` apropriado
-- separar agenda incremental e agenda full sem duplicar a logica da execucao
+- manter a execucao operacional incremental sem duplicar a logica da execucao
 
 Isso permite dois modos operacionais:
 
 - modo por produto
-  - roda apenas `load_ds_airbyte_dag`
-  - ou roda apenas `load_dw_dbt_dag`
+  - roda apenas `load_ds_airbyte_dimensions_dag`
+  - ou roda apenas `load_dw_dbt_dimensions_dag`
 
 - modo orquestrado
-  - o Airflow usa `orchestrate_ds_dw_dag`
+  - o Airflow usa `orchestrate_ds_dw_dimensions_dag`
   - primeiro executa o Airbyte
   - depois executa o dbt
 
@@ -70,38 +82,22 @@ Campos suportados:
   - lista de modelos dbt ou string separada por virgula
 - `airbyte_connection_id`
   - `connection_id` da conexao Airbyte a ser sincronizada
-- `wait_for_airbyte`
-  - `true` por padrao
 - `airbyte_timeout_seconds`
   - timeout maximo de espera da sync
 - `airbyte_poll_interval_seconds`
   - intervalo de polling da API do Airbyte
-- `reconciliation_mode`
-  - `incremental` ou `full`
-  - controla se a execucao deve processar apenas delta ou fazer reconciliacao completa da entidade
 - `dbt_vars`
   - dicionario opcional de variaveis repassadas ao dbt
-- `full_refresh`
-  - `true` ou `false`
-  - quando `true`, executa o dbt com `--full-refresh`
 - `watermark_pipeline_name`
   - nome do pipeline na `CTL_PIPELINE_WATERMARK`
-- `watermark_id_clientes`
-  - lista de clientes afetados pela extracao
-  - opcional
-  - para pipelines globais, pode ser omitido
-- `watermark_client_source_table`
-  - tabela usada para buscar todos os clientes quando `watermark_id_clientes` nao for informado
-- `watermark_client_id_column`
-  - coluna do id do cliente na tabela de clientes
-- `watermark_client_active_column`
-  - coluna opcional para filtrar clientes ativos
+- `cleanup_raw_specs`
+  - lista opcional de deletes tecnicos do `RAW` para rodar ao final da orquestracao com sucesso
 
 ### Exemplo apenas com dbt
 
 ```json
 {
-  "models": ["stg_ds__sx_estado_d", "dim_sx_estado_d"]
+  "models": ["ds_sx_equipamento_d", "stg_ds__sx_equipamento_d", "dim_sx_equipamento_d"]
 }
 ```
 
@@ -109,9 +105,8 @@ Campos suportados:
 
 ```json
 {
-  "airbyte_connection_id": "00000000-0000-0000-0000-000000000000",
-  "watermark_pipeline_name": "dim_sx_estado_d",
-  "watermark_id_clientes": [0]
+  "airbyte_connection_id": "404f8969-e421-416e-96f6-cd0434047acf",
+  "watermark_pipeline_name": "dim_sx_equipamento_d"
 }
 ```
 
@@ -119,29 +114,18 @@ Campos suportados:
 
 ```json
 {
-  "airbyte_connection_id": "00000000-0000-0000-0000-000000000000",
-  "models": ["stg_ds__sx_estado_d", "dim_sx_estado_d"],
-  "reconciliation_mode": "incremental",
-  "full_refresh": false,
+  "airbyte_connection_id": "404f8969-e421-416e-96f6-cd0434047acf",
+  "models": ["ds_sx_equipamento_d", "stg_ds__sx_equipamento_d", "dim_sx_equipamento_d"],
   "dbt_vars": {},
-  "watermark_pipeline_name": "dim_sx_estado_d",
-  "watermark_id_clientes": [0]
-}
-```
-
-### Exemplo de reconciliacao full
-
-```json
-{
-  "airbyte_connection_id": "00000000-0000-0000-0000-000000000000",
-  "models": ["ds_sx_estado_d", "stg_ds__sx_estado_d", "dim_sx_estado_d"],
-  "reconciliation_mode": "full",
-  "full_refresh": true,
-  "dbt_vars": {
-    "sx_estado_d_reconciliation_mode": "full"
-  },
-  "watermark_pipeline_name": "dim_sx_estado_d",
-  "watermark_id_clientes": [0]
+  "watermark_pipeline_name": "dim_sx_equipamento_d",
+  "cleanup_raw_specs": [
+    {
+      "step_name": "CLEANUP_RAW_CDT_EQUIPAMENTO",
+      "target_name": "SOLIX_BI.RAW.CDT_EQUIPAMENTO",
+      "description": "cleanup tecnico do RAW de sx_equipamento_d apos sucesso do pipeline",
+      "sql": "delete from SOLIX_BI.RAW.CDT_EQUIPAMENTO"
+    }
+  ]
 }
 ```
 
@@ -170,40 +154,41 @@ Para Airbyte Cloud, o runtime do Airflow tambem precisa conhecer:
   - opcional
   - padrao: `https://api.airbyte.com/v1`
 
+Para alertas operacionais por webhook, o runtime do Airflow pode conhecer:
+
+- `AIRFLOW_ALERT_WEBHOOK_URL`
+  - opcional
+  - se informado, recebe alertas de falha e retry das DAGs criticas
+
 ## Execucao local
 
 - subir o Airbyte localmente via `abctl`
 - subir a stack do Airflow com `docker compose -f docker-compose.local.yml up --build -d`
 - acessar Airflow em `http://localhost:8080`
 - configurar o Airbyte conforme [AIRBYTE.md](./AIRBYTE.md)
-- usar `load_dw_dbt_dag` para execucoes manuais
-- usar `load_ds_airbyte_dag` para execucoes manuais apenas de extracao
-- usar `orchestrate_ds_dw_dag` para execucoes manuais fim a fim
-- usar `schedule_sx_estado_d_incremental_dag` para o agendamento frequente
-- usar `schedule_sx_estado_d_full_dag` para a reconciliacao diaria
+- usar `load_dw_dbt_dimensions_dag` para execucoes manuais
+- usar `load_ds_airbyte_dimensions_dag` para execucoes manuais apenas de extracao
+- usar `orchestrate_ds_dw_dimensions_dag` para execucoes manuais fim a fim
+- usar `cleanup_dimensions_retention_dag` para limpeza tecnica manual de retencao
 - usar `schedule_sx_equipamento_d_incremental_dag` para o agendamento frequente do equipamento
-- usar `reproc_sx_equipamento_d_dag` para reprocessamento manual do equipamento
 
 ## Modelo operacional recomendado
 
-- `load_ds_airbyte_dag`
+- `load_ds_airbyte_dimensions_dag`
   - DAG principal de extracao
   - sem `schedule` proprio
-- `load_dw_dbt_dag`
+- `load_dw_dbt_dimensions_dag`
   - DAG principal de transformacao
   - sem `schedule` proprio
-- `orchestrate_ds_dw_dag`
+- `orchestrate_ds_dw_dimensions_dag`
   - DAG principal de orquestracao fim a fim
   - sem `schedule` proprio
-- `schedule_sx_estado_d_incremental_dag`
-  - agenda a rotina incremental
-- `schedule_sx_estado_d_full_dag`
-  - agenda a rotina full de reconciliacao
+- `cleanup_dimensions_retention_dag`
+  - DAG separada para retencao tecnica de `DS`
+  - com `schedule` diario proprio
 - `schedule_sx_equipamento_d_incremental_dag`
   - agenda a rotina incremental do equipamento
-- `reproc_sx_equipamento_d_dag`
-  - DAG manual para reprocessamento do equipamento
-  - executa reprocessamento full global do equipamento
+  - nao expoe reprocessamento dbt nem `full_refresh`
 
 ## Pools recomendados
 
@@ -215,6 +200,9 @@ Para producao, criar estes pools no Airflow:
 - `dbt_build_pool`
   - usado na task `run_dw_dbt`
   - recomendacao inicial: `2` a `4` slots, conforme capacidade do warehouse
+- `retention_cleanup_pool`
+  - usado nas tasks de cleanup tecnico
+  - recomendacao inicial: `1` slot para evitar contenção com a carga principal
 
 As DAGs de agendamento mais criticas foram configuradas com:
 
@@ -226,14 +214,15 @@ Isso evita concorrencia desnecessaria do mesmo pipeline ao mesmo tempo.
 
 O fluxo recomendado passa a ser:
 
-1. `load_ds_airbyte_dag`
+1. `load_ds_airbyte_dimensions_dag`
    - grava `LAST_EXTRACT_STARTED_AT`
    - dispara e aguarda a sync do Airbyte
    - grava `LAST_EXTRACT_ENDED_AT`
-2. `load_dw_dbt_dag`
-   - executa dbt para `DS -> DW`
-3. `orchestrate_ds_dw_dag`
+2. `load_dw_dbt_dimensions_dag`
+   - executa dbt incremental para `DS -> DW`
+3. `orchestrate_ds_dw_dimensions_dag`
    - encadeia as duas DAGs acima quando o fluxo precisar ser completo
+   - executa o cleanup do `RAW` ao final, apos sucesso completo, quando `cleanup_raw_specs` e informado
 
 Esse desenho preserva a separacao de responsabilidade:
 
@@ -242,26 +231,136 @@ Esse desenho preserva a separacao de responsabilidade:
 - dbt
   - metadados de transformacao e carga
 
-## Reprocessamento manual do equipamento
-
-Para `sx_equipamento`, o desenho recomendado e:
-
-- a DAG reprocessa globalmente o equipamento
-- executa dbt com `--full-refresh`
-- relê todo o dado disponivel no `RAW`
-- o equipamento segue o legado com `DS -> DW` global no fluxo operacional
-- o watermark operacional do pipeline e global por `PIPELINE_NAME`
-
-Exemplo manual:
-
-```json
-{}
-```
-
-Essa DAG nao usa filtro por cliente nem data. O objetivo dela e reconstruir o pipeline completo do equipamento a partir do `RAW`.
-
 ## Limites de responsabilidade
 
 - Airflow nao implementa extracao customizada de Oracle ou PostgreSQL
 - Airflow apenas integra com a API do Airbyte quando a sync precisa entrar no mesmo fluxo orquestrado
 - transformacoes e modelagem continuam no `dbt`
+
+## Retencao tecnica
+
+O projeto usa duas abordagens complementares:
+
+- `RAW`
+  - cleanup tecnico por execucao da entidade
+  - executado ao final da `orchestrate_ds_dw_dimensions_dag`, apos sucesso completo
+- `DS`
+  - cleanup tecnico em DAG separada
+
+- `cleanup_dimensions_retention_dag`
+  - `DS`: mantém apenas o dia atual com base em `cast(BI_UPDATED_AT as date)`
+  - `schedule`: `50 23 * * *`
+  - objetivo: executar apos a ultima janela principal do dia
+
+Exemplo:
+
+- se o cleanup rodar em `24/04/2026 01:00`
+  - mantem tudo de `24/04/2026`
+  - remove tudo de `23/04/2026` para tras
+
+## Riscos Operacionais
+
+Os principais riscos operacionais identificados hoje sao:
+
+- comportamento de falha parcial ainda depende de disciplina operacional
+- dependencia de configuracao correta do webhook de alerta
+- timeout do Airbyte ainda exige acao operacional no Airbyte antes de rerun cego
+
+Esses pontos nao invalidam a arquitetura, mas precisam de endurecimento antes de chamar a esteira de producao madura.
+
+## Melhorias Recomendadas
+
+### 1. Agenda da retencao do `DS`
+
+Implementado:
+
+- `cleanup_dimensions_retention_dag` com `schedule = 50 23 * * *`
+- manter `max_active_runs = 1`
+- manter `pool = retention_cleanup_pool`
+
+Objetivo:
+
+- garantir que o `DS` retenha apenas o dia calendario atual
+- evitar crescimento silencioso de storage
+
+### 2. Formalizar comportamento em falha parcial
+
+O comportamento esperado da esteira deve ser este:
+
+- falha em `load_ds_airbyte_dimensions_dag`
+  - `load_dw_dbt_dimensions_dag` nao roda
+  - cleanup do `RAW` nao roda
+  - batch da orquestracao termina como `FAILED`
+
+- falha em `load_dw_dbt_dimensions_dag`
+  - cleanup do `RAW` nao roda
+  - batch da orquestracao termina como `FAILED`
+  - o `RAW` permanece disponivel para analise ou rerun
+
+- falha em `cleanup_raw_after_success`
+  - Airbyte e dbt ja concluiram
+  - batch da orquestracao deve refletir falha
+  - o dado analitico fica carregado, mas o `RAW` nao foi limpo
+
+- falha em `cleanup_dimensions_retention_dag`
+  - nao afeta a carga analitica ja concluida
+  - afeta apenas a politica de retencao do `DS`
+  - deve ser tratada como incidente operacional de manutencao
+
+### 3. Alertas minimos
+
+Implementado:
+
+- callback de falha nas DAGs criticas
+- callback de retry nas DAGs de `Airbyte`, `dbt` e cleanup
+- envio para webhook quando `AIRFLOW_ALERT_WEBHOOK_URL` estiver configurada
+- fallback para log quando o webhook nao estiver configurado
+
+Cobertura atual:
+
+- DAGs de agendamento criadas por `pipeline_patterns.py`
+- `load_ds_airbyte_dimensions_dag`
+- `load_dw_dbt_dimensions_dag`
+- `orchestrate_ds_dw_dimensions_dag`
+- `cleanup_dimensions_retention_dag`
+
+Observacao:
+
+- o alerta de "DAG nao rodou no dia esperado" ainda depende de monitoracao complementar no Airflow ou ferramenta externa
+
+### 4. Definir fallback para timeout do Airbyte
+
+Implementado:
+
+- mensagem de timeout com `connection_id`, `job_id`, `timeout_seconds` e `last_status`
+- orientacao explicita para verificar o job no Airbyte antes de relancar a DAG
+
+Quando a task do Airbyte estourar timeout, a operacao deve:
+
+- verificar no Airbyte se o job ainda esta executando
+- se o job ainda estiver rodando, nao relancar cegamente a DAG
+- se o job tiver falhado, rerodar a esteira pelo Airflow
+- registrar o `job_id`, `connection_id` e horario do incidente
+
+Melhorias sugeridas:
+
+- documentar timeout por entidade
+- revisar se o timeout atual esta adequado ao volume real
+- adicionar retry curto apenas para falhas transitorias de rede ou API
+
+## Recomendacao Operacional
+
+Para a POC operar mais proxima de producao, esta trilha agora conta com:
+
+1. `schedule` ativo da `cleanup_dimensions_retention_dag`
+2. callbacks minimos de alerta para falha e retry
+3. fallback operacional explicito para timeout do Airbyte
+4. uso de `CTL_LOAD_AUDIT`, `CTL_BATCH_EXECUTION` e `CTL_PIPELINE_WATERMARK` como base de troubleshooting
+
+Com isso, o desenho fica mais robusto sem mudar a arquitetura principal:
+
+- `Airbyte -> RAW`
+- `RAW -> DS`
+- `DS -> DW`
+- cleanup do `RAW` por execucao
+- cleanup do `DS` por agenda separada

@@ -46,10 +46,6 @@
 -- Identificador do pipeline na tabela de watermark
 {% set WATERMARK_PIPELINE_NAME = 'dim_sx_equipamento_d' %}
 
--- Variavel opcional para reprocessamento manual por data
-{% set REPROCESS_FROM = var('dim_sx_equipamento_d_reprocess_from', none) %}
-{% set FILTER_ID_CLIENTE = var('id_cliente', none) %}
-
 {{ config(
     materialized='incremental',
     alias=MODEL_ALIAS,
@@ -64,16 +60,7 @@
               '" ~ WATERMARK_PIPELINE_NAME ~ "' as PIPELINE_NAME,
               max(BI_UPDATED_AT) as LAST_BI_UPDATED_AT,
               '" ~ invocation_id ~ "' as LAST_SUCCESS_BATCH_ID,
-              case
-                  -- Detecta full refresh em runtime pela linha orfa criada nesta execucao.
-                  when exists (
-                      select 1
-                      from {{ this }} orphan_probe
-                      where orphan_probe." ~ SURROGATE_KEY_COLUMN ~ " = -1
-                        and orphan_probe.ETL_BATCH_ID = '" ~ invocation_id ~ "'
-                  ) then 'FULL_REFRESH'
-                  " ~ ("when 1 = 1 then 'REPROCESS_FROM_DATE'" if REPROCESS_FROM else "else 'INCREMENTAL_WATERMARK'") ~ "
-              end as LAST_LOAD_MODE,
+              'INCREMENTAL_WATERMARK' as LAST_LOAD_MODE,
               '" ~ invocation_id ~ "' as LAST_RUN_BATCH_ID,
               convert_timezone('UTC', current_timestamp())::timestamp_ntz as LAST_RUN_STARTED_AT,
               convert_timezone('UTC', current_timestamp())::timestamp_ntz as LAST_RUN_COMMITTED_AT,
@@ -150,15 +137,8 @@ staged_source as (
     from {{ ref(STAGING_MODEL_NAME) }} s
     cross join watermark_control w
     where 1 = 1
-    {% if FILTER_ID_CLIENTE is not none %}
-      and s.ID_CLIENTE = {{ FILTER_ID_CLIENTE }}
-    {% endif %}
     {% if is_incremental() %}
-      {% if REPROCESS_FROM %}
-        and s.BI_UPDATED_AT >= '{{ REPROCESS_FROM }}'::timestamp_ntz
-      {% else %}
-        and s.BI_UPDATED_AT > coalesce(w.LAST_BI_UPDATED_AT, '1900-01-01'::timestamp_ntz)
-      {% endif %}
+      and s.BI_UPDATED_AT > coalesce(w.LAST_BI_UPDATED_AT, '1900-01-01'::timestamp_ntz)
     {% endif %}
 ),
 

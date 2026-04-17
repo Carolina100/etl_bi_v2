@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
 from typing import Any
@@ -12,8 +13,11 @@ from airflow.settings import Session
 from airflow.task.trigger_rule import TriggerRule
 
 from src.utils.airflow_helpers import (
+    airflow_failure_alert_callback,
     audit_batch_execution_end,
     audit_batch_execution_start,
+    audit_load_audit,
+    execute_snowflake_sql,
 )
 
 
@@ -31,7 +35,6 @@ def register_batch_start(**context: Any) -> dict[str, Any]:
         source_name=source_name,
         target_name=target_name,
         orchestration_type=orchestration_type,
-        id_cliente=resolve_single_client_id(dag_conf.get("watermark_id_clientes")),
     )
     return {"status": "STARTED", "orchestration_type": orchestration_type}
 
@@ -47,7 +50,11 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
                 .filter(
                     TaskInstance.dag_id == dag_run.dag_id,
                     TaskInstance.run_id == dag_run.run_id,
-                    TaskInstance.task_id.in_(["trigger_load_ds_airbyte", "trigger_load_dw_dbt"]),
+                    TaskInstance.task_id.in_([
+                        "trigger_load_ds_airbyte",
+                        "trigger_load_dw_dbt",
+                        "cleanup_raw_after_success",
+                    ]),
                 )
                 .all()
             )
@@ -56,7 +63,7 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
         session.close()
 
     task_states = []
-    for task_id in ("trigger_load_ds_airbyte", "trigger_load_dw_dbt"):
+    for task_id in ("trigger_load_ds_airbyte", "trigger_load_dw_dbt", "cleanup_raw_after_success"):
         ti = task_instances.get(task_id)
         if ti is not None and ti.state is not None:
             task_states.append((task_id, ti.state))
@@ -83,34 +90,96 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
         status=status,
         error_message=error_message,
         duration_seconds=duration_seconds,
-        id_cliente=resolve_single_client_id(dag_conf.get("watermark_id_clientes")),
     )
     return {"status": status}
 
 
+def cleanup_raw_after_success(**context: Any) -> dict[str, Any]:
+    dag_run = context.get("dag_run")
+    dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
+    cleanup_specs = parse_cleanup_specs(dag_conf.get("cleanup_raw_specs"))
+
+    if not cleanup_specs:
+        return {"status": "SKIPPED", "reason": "cleanup_raw_specs nao informado"}
+
+    batch_id = dag_run.run_id
+    total_rows_deleted = 0
+    executed_targets: list[str] = []
+
+    for execution_order, spec in enumerate(cleanup_specs, start=1):
+        step_start_time = time.time()
+        started_at = datetime.utcnow()
+
+        audit_load_audit(
+            batch_id=batch_id,
+            step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
+            source_name="RETENTION",
+            target_name=spec["target_name"],
+            status="STARTED",
+            details=spec.get("description", "cleanup tecnico do RAW apos sucesso do pipeline"),
+            execution_order=execution_order,
+            started_at=started_at,
+        )
+
+        execution_result = execute_snowflake_sql(sql=spec["sql"])
+        rows_affected = execution_result.get("rows_affected")
+        if rows_affected is not None:
+            total_rows_deleted += int(rows_affected)
+
+        audit_load_audit(
+            batch_id=batch_id,
+            step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
+            source_name="RETENTION",
+            target_name=spec["target_name"],
+            status="SUCCESS",
+            details="cleanup tecnico do RAW concluido",
+            rows_processed=rows_affected,
+            execution_order=execution_order,
+            duration_seconds=int(time.time() - step_start_time),
+            started_at=started_at,
+            ended_at=datetime.utcnow(),
+        )
+        executed_targets.append(spec["target_name"])
+
+    return {
+        "status": "SUCCESS",
+        "rows_deleted": total_rows_deleted,
+        "targets": executed_targets,
+    }
+
+
+def parse_cleanup_specs(raw_value: Any) -> list[dict[str, str]]:
+    if raw_value in (None, "", "null", "None"):
+        return []
+    if isinstance(raw_value, list):
+        return [spec for spec in raw_value if isinstance(spec, dict) and spec.get("sql") and spec.get("target_name")]
+    if isinstance(raw_value, str):
+        parsed_value = json.loads(raw_value)
+        if isinstance(parsed_value, list):
+            return [spec for spec in parsed_value if isinstance(spec, dict) and spec.get("sql") and spec.get("target_name")]
+    return []
+
+
 with DAG(
-    dag_id="orchestrate_ds_dw_dag",
-    description="Orquestra o fluxo Airbyte -> dbt mantendo produtos separados em DAGs distintas.",
+    dag_id="orchestrate_ds_dw_dimensions_dag",
+    description="Orquestra a trilha de dimensoes: Airbyte -> dbt -> cleanup tecnico do RAW.",
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,
     max_active_runs=1,
-    tags=["orchestration", "airbyte", "dbt"],
+    tags=["orchestration", "airbyte", "dbt", "dimensions"],
     default_args={"email_on_failure": False, "email_on_retry": False, "retries": 0},
+    on_failure_callback=airflow_failure_alert_callback,
     params={
         "airbyte_connection_id": "",
     },
 ) as dag:
     trigger_load_ds_airbyte = TriggerDagRunOperator(
         task_id="trigger_load_ds_airbyte",
-        trigger_dag_id="load_ds_airbyte_dag",
+        trigger_dag_id="load_ds_airbyte_dimensions_dag",
         conf={
             "airbyte_connection_id": "{{ dag_run.conf.get('airbyte_connection_id', params.airbyte_connection_id) }}",
             "watermark_pipeline_name": "{{ dag_run.conf.get('watermark_pipeline_name', '') }}",
-            "watermark_id_clientes": "{{ dag_run.conf.get('watermark_id_clientes') | tojson }}",
-            "watermark_client_source_table": "{{ dag_run.conf.get('watermark_client_source_table', '') }}",
-            "watermark_client_id_column": "{{ dag_run.conf.get('watermark_client_id_column', 'CD_ID') }}",
-            "watermark_client_active_column": "{{ dag_run.conf.get('watermark_client_active_column', 'FG_ATIVO') }}",
             "airbyte_timeout_seconds": "{{ dag_run.conf.get('airbyte_timeout_seconds', 3600) }}",
             "airbyte_poll_interval_seconds": "{{ dag_run.conf.get('airbyte_poll_interval_seconds', 15) }}",
         },
@@ -121,22 +190,22 @@ with DAG(
 
     trigger_load_dw_dbt = TriggerDagRunOperator(
         task_id="trigger_load_dw_dbt",
-        trigger_dag_id="load_dw_dbt_dag",
+        trigger_dag_id="load_dw_dbt_dimensions_dag",
         conf={
             "models": "{{ dag_run.conf.get('models', []) | tojson }}",
-            "client_models": "{{ dag_run.conf.get('client_models', []) | tojson }}",
-            "reconciliation_mode": "{{ dag_run.conf.get('reconciliation_mode', 'incremental') }}",
             "dbt_vars": "{{ dag_run.conf.get('dbt_vars', {}) | tojson }}",
-            "full_refresh": "{{ dag_run.conf.get('full_refresh', false) }}",
-            "continue_on_client_error": "{{ dag_run.conf.get('continue_on_client_error', true) }}",
-            "watermark_id_clientes": "{{ dag_run.conf.get('watermark_id_clientes') | tojson }}",
-            "watermark_client_source_table": "{{ dag_run.conf.get('watermark_client_source_table', '') }}",
-            "watermark_client_id_column": "{{ dag_run.conf.get('watermark_client_id_column', 'ID_CLIENTE') }}",
-            "watermark_client_active_column": "{{ dag_run.conf.get('watermark_client_active_column', 'FL_ATIVO') }}",
         },
         wait_for_completion=True,
         poke_interval=30,
         queue="dbt",
+    )
+
+    cleanup_raw_after_success_task = PythonOperator(
+        task_id="cleanup_raw_after_success",
+        python_callable=cleanup_raw_after_success,
+        queue="dbt",
+        pool="retention_cleanup_pool",
+        trigger_rule=TriggerRule.ALL_SUCCESS,
     )
 
     register_batch_start_task = PythonOperator(
@@ -152,12 +221,4 @@ with DAG(
         trigger_rule=TriggerRule.ALL_DONE,
     )
 
-    register_batch_start_task >> trigger_load_ds_airbyte >> trigger_load_dw_dbt >> register_batch_end_task
-
-
-def resolve_single_client_id(raw_value: Any) -> int | None:
-    if isinstance(raw_value, list) and len(raw_value) == 1:
-        return int(raw_value[0])
-    if isinstance(raw_value, int):
-        return raw_value
-    return None
+    register_batch_start_task >> trigger_load_ds_airbyte >> trigger_load_dw_dbt >> cleanup_raw_after_success_task >> register_batch_end_task

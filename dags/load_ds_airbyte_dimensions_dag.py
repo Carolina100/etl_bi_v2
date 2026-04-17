@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import ast
-import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
 from src.utils.airflow_helpers import (
+    airflow_failure_alert_callback,
+    airflow_retry_alert_callback,
     audit_load_audit,
     run_airbyte_cloud_sync,
     run_extract_watermark_event,
@@ -19,13 +19,7 @@ from src.utils.airflow_helpers import (
 def register_extract_start(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
     dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
-    client_ids = parse_watermark_client_ids(dag_conf.get("watermark_id_clientes"))
-    id_cliente = client_ids[0] if client_ids and len(client_ids) == 1 else None
-    target_name = (
-        dag_conf.get("watermark_client_source_table")
-        or context["params"].get("watermark_client_source_table")
-        or "UNKNOWN"
-    )
+    target_name = "RAW"
     pipeline_name = dag_conf.get("watermark_pipeline_name")
 
     step_start_time = time.time()
@@ -37,7 +31,6 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
         source_name="AIRBYTE",
         target_name=target_name,
         status="STARTED",
-        id_cliente=id_cliente,
         details=f"pipeline={pipeline_name}",
         execution_order=1,
         started_at=started_at,
@@ -45,16 +38,8 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
 
     result = run_extract_watermark_event(
         pipeline_name=pipeline_name,
-        id_clientes=client_ids,
+        id_clientes=None,
         event_type="start",
-        client_source_table=target_name,
-        client_id_column=str(
-            dag_conf.get("watermark_client_id_column")
-            or context["params"].get("watermark_client_id_column")
-            or "CD_ID"
-        ),
-        client_active_column=dag_conf.get("watermark_client_active_column")
-        or context["params"].get("watermark_client_active_column"),
     )
 
     duration_seconds = int(time.time() - step_start_time)
@@ -66,7 +51,6 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
         source_name="AIRBYTE",
         target_name=target_name,
         status="SUCCESS",
-        id_cliente=id_cliente,
         details=f"event={result.get('event_type')}",
         execution_order=1,
         duration_seconds=duration_seconds,
@@ -80,13 +64,7 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
 def register_extract_end(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
     dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
-    client_ids = parse_watermark_client_ids(dag_conf.get("watermark_id_clientes"))
-    id_cliente = client_ids[0] if client_ids and len(client_ids) == 1 else None
-    target_name = (
-        dag_conf.get("watermark_client_source_table")
-        or context["params"].get("watermark_client_source_table")
-        or "UNKNOWN"
-    )
+    target_name = "RAW"
     pipeline_name = dag_conf.get("watermark_pipeline_name")
 
     step_start_time = time.time()
@@ -98,7 +76,6 @@ def register_extract_end(**context: Any) -> dict[str, Any]:
         source_name="AIRBYTE",
         target_name=target_name,
         status="STARTED",
-        id_cliente=id_cliente,
         details=f"pipeline={pipeline_name}",
         execution_order=3,
         started_at=started_at,
@@ -106,16 +83,8 @@ def register_extract_end(**context: Any) -> dict[str, Any]:
 
     result = run_extract_watermark_event(
         pipeline_name=pipeline_name,
-        id_clientes=client_ids,
+        id_clientes=None,
         event_type="end",
-        client_source_table=target_name,
-        client_id_column=str(
-            dag_conf.get("watermark_client_id_column")
-            or context["params"].get("watermark_client_id_column")
-            or "CD_ID"
-        ),
-        client_active_column=dag_conf.get("watermark_client_active_column")
-        or context["params"].get("watermark_client_active_column"),
     )
 
     duration_seconds = int(time.time() - step_start_time)
@@ -127,7 +96,6 @@ def register_extract_end(**context: Any) -> dict[str, Any]:
         source_name="AIRBYTE",
         target_name=target_name,
         status="SUCCESS",
-        id_cliente=id_cliente,
         details=f"event={result.get('event_type')}",
         execution_order=3,
         duration_seconds=duration_seconds,
@@ -165,14 +133,8 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
         or context["params"].get("airbyte_poll_interval_seconds")
         or 15
     )
-    target_name = (
-        dag_conf.get("watermark_client_source_table")
-        or context["params"].get("watermark_client_source_table")
-        or "UNKNOWN"
-    )
+    target_name = "RAW"
     pipeline_name = dag_conf.get("watermark_pipeline_name")
-    id_clientes = parse_watermark_client_ids(dag_conf.get("watermark_id_clientes"))
-    id_cliente = id_clientes[0] if id_clientes and len(id_clientes) == 1 else None
 
     step_start_time = time.time()
     started_at = datetime.utcnow()
@@ -183,7 +145,6 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
         source_name="AIRBYTE",
         target_name=target_name,
         status="STARTED",
-        id_cliente=id_cliente,
         details=f"pipeline={pipeline_name}",
         execution_order=2,
         started_at=started_at,
@@ -210,7 +171,6 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
             target_name=target_name,
             status="SUCCESS",
             rows_processed=rows_processed,
-            id_cliente=id_cliente,
             details=details,
             execution_order=2,
             duration_seconds=duration_seconds,
@@ -227,7 +187,6 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
             source_name="AIRBYTE",
             target_name=target_name,
             status="FAILED",
-            id_cliente=id_cliente,
             details=str(exc),
             execution_order=2,
             duration_seconds=duration_seconds,
@@ -236,51 +195,29 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
         )
         raise
 
-
-def parse_watermark_client_ids(raw_value: Any) -> list[int]:
-    if raw_value is None or raw_value == "":
-        return None
-
-    if isinstance(raw_value, str) and raw_value.strip().lower() in {"none", "null", ""}:
-        return None
-
-    if isinstance(raw_value, int):
-        return [raw_value]
-
-    if isinstance(raw_value, list):
-        return [int(item) for item in raw_value]
-
-    if isinstance(raw_value, str):
-        parsed_ids = try_parse_json_list(raw_value)
-        if parsed_ids is not None:
-            return [int(item) for item in parsed_ids]
-        parsed_python_ids = try_parse_python_list(raw_value)
-        if parsed_python_ids is not None:
-            return [int(item) for item in parsed_python_ids]
-        return [int(item.strip()) for item in raw_value.split(",") if item.strip()]
-
-    return None
-
-
 with DAG(
-    dag_id="load_ds_airbyte_dag",
-    description="Executa apenas a extracao Airbyte para DS e registra metadados de extracao.",
+    dag_id="load_ds_airbyte_dimensions_dag",
+    description="Executa apenas a extracao Airbyte para a trilha de dimensoes e registra metadados de extracao.",
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,
     max_active_runs=4,
-    tags=["airbyte", "ds"],
-    default_args={"email_on_failure": False, "email_on_retry": False, "retries": 0},
+    tags=["airbyte", "ds", "dimensions"],
+    default_args={
+        "email_on_failure": False,
+        "email_on_retry": False,
+        "retries": 1,
+        "retry_delay": timedelta(minutes=5),
+        "on_failure_callback": airflow_failure_alert_callback,
+        "on_retry_callback": airflow_retry_alert_callback,
+    },
     params={
         "airbyte_connection_id": "",
         "watermark_pipeline_name": "",
-        "watermark_id_clientes": None,
-        "watermark_client_source_table": "",
-        "watermark_client_id_column": "CD_ID",
-        "watermark_client_active_column": "FG_ATIVO",
         "airbyte_timeout_seconds": 3600,
         "airbyte_poll_interval_seconds": 15,
     },
+    on_failure_callback=airflow_failure_alert_callback,
 ) as dag:
     register_extract_start_task = PythonOperator(
         task_id="register_extract_start",
@@ -302,21 +239,3 @@ with DAG(
     )
 
     register_extract_start_task >> sync_ds_airbyte >> register_extract_end_task
-
-
-def try_parse_json_list(raw_value: str) -> list[Any] | None:
-    try:
-        parsed = json.loads(raw_value)
-    except Exception:
-        return None
-
-    return parsed if isinstance(parsed, list) else None
-
-
-def try_parse_python_list(raw_value: str) -> list[Any] | None:
-    try:
-        parsed = ast.literal_eval(raw_value)
-    except Exception:
-        return None
-
-    return parsed if isinstance(parsed, list) else None

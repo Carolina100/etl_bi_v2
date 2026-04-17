@@ -4,8 +4,8 @@ Este documento define o uso do Airbyte como camada oficial de ingestao do projet
 
 O desenho alvo e:
 
-- Oracle / PostgreSQL -> Airbyte -> Snowflake DS
-- Snowflake DS -> dbt -> Snowflake DW
+- Oracle / PostgreSQL -> Airbyte -> Snowflake RAW/landing
+- Snowflake RAW/landing -> dbt -> Snowflake DS -> Snowflake DW
 - Airflow orquestrando o `dbt` e, quando necessario, coordenando a execucao dos jobs do Airbyte
 
 O repositorio nao deve mais concentrar logica Python de extracao DS.
@@ -22,17 +22,17 @@ Padronizar a ingestao de dados em `DS` com uma ferramenta propria para replicaca
 
 Com isso:
 
-- Airbyte cuida da extracao e escrita em `Snowflake DS`
-- dbt cuida das transformacoes para `DW`
+- Airbyte cuida da extracao e escrita na camada tecnica de aterrissagem
+- dbt cuida das transformacoes para `DS` e `DW`
 - Airflow coordena a ordem de execucao do fluxo analitico
 
 ## Escopo deste projeto
 
 No contexto deste repositorio:
 
-- Airbyte e a rota principal de ingestao DS
-- a DAG local principal continua sendo `load_dw_dbt_dag`
-- o `dbt` consome tabelas da camada `DS` produzidas pelo Airbyte
+- Airbyte e a rota principal de ingestao da camada tecnica de aterrissagem
+- a DAG local principal continua sendo `load_dw_dbt_dimensions_dag`
+- o `dbt` consome tabelas aterrissadas pelo Airbyte e consolida `DS` e `DW`
 - qualquer logica de filtro incremental, CDC ou refresh deve ser preferencialmente configurada no proprio Airbyte
 
 Este documento cobre:
@@ -49,12 +49,19 @@ Este documento cobre:
   - conecta nas fontes Oracle e PostgreSQL
   - extrai dados
   - aplica estrategia de sincronizacao definida no conector
-  - grava no Snowflake na camada `DS`
+  - grava no Snowflake na camada tecnica de aterrissagem
+
+- Snowflake RAW / landing
+  - recebe a camada tecnica aterrissada pelo Airbyte
+  - deve ser `TRANSIENT`
+  - nao deve ser `TEMPORARY TABLE`
+  - deve ter retencao curta e cleanup tecnico
+  - nao e camada historica
 
 - Snowflake DS
-  - recebe a camada de aterrissagem consumida pelo `dbt`
-  - concentra tabelas replicadas da origem
-  - preserva colunas tecnicas e de atualizacao vindas da fonte quando existirem
+  - recebe a camada consolidada pelo `dbt`
+  - concentra o current-state operacional de curto prazo
+  - nao e camada historica
 
 - dbt
   - trata padronizacao, limpeza e regras de negocio
@@ -111,10 +118,10 @@ Criar conectores separados para cada sistema de origem relevante, por exemplo:
 
 ### Destino
 
-Usar Snowflake como destino da camada `DS`, apontando para:
+Usar Snowflake como destino da camada tecnica de aterrissagem, apontando para:
 
 - mesma conta Snowflake usada pelo `dbt`
-- database e schema de `DS` consumidos por `dbt/solix_dbt`
+- database e schema de `RAW` / landing consumidos por `dbt/solix_dbt`
 - tabela tecnica de aterrissagem por entidade quando houver merge semantico antes do `DW`
 
 ### Nomeacao
@@ -148,7 +155,8 @@ Sempre que possivel:
 Quando a entidade exigir merge semantico antes do `DW`, o padrao recomendado e:
 
 - Airbyte escreve em uma `TRANSIENT TABLE` de aterrissagem
-- a tabela e truncada ou recarregada a cada sync
+- a tabela nao deve ser `TEMPORARY`
+- a reducao de storage deve vir de cleanup por janela tecnica
 - o dbt faz o merge para a tabela final do `DS`
 
 Exemplo adotado para a entidade piloto `SX_ESTADO_D`:
@@ -190,13 +198,14 @@ Importante:
 
 O desenho minimo e:
 
-1. Airbyte sincroniza a camada `DS`
+1. Airbyte sincroniza a camada tecnica de aterrissagem
 2. Airflow executa `dbt build`
-3. `DW` e atualizado a partir do `DS`
+3. `DS` e atualizado a partir da aterrissagem
+4. `DW` e atualizado a partir do `DS`
 
 No estado atual do repositorio:
 
-- a DAG [load_dw_dbt_dag.py](../dags/load_dw_dbt_dag.py) e a DAG principal de execucao
+- a DAG [load_dw_dbt_dimensions_dag.py](../dags/load_dw_dbt_dimensions_dag.py) e a DAG principal de execucao
 - as DAGs de agendamento disparam essa DAG principal com `conf` diferente para incremental e full
 
 Para um desenho mais proximo de producao, o recomendado e evoluir para uma destas abordagens:

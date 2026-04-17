@@ -28,6 +28,68 @@ def ensure_env_var(name: str) -> str:
     return value
 
 
+def send_operational_alert(
+    *,
+    title: str,
+    message: str,
+    severity: str = "ERROR",
+) -> None:
+    webhook_url = os.getenv("AIRFLOW_ALERT_WEBHOOK_URL")
+    formatted_message = f"[{severity}] {title}\n{message}"
+
+    if not webhook_url:
+        LOGGER.warning("Alerta operacional sem webhook configurado: %s", formatted_message)
+        return
+
+    try:
+        response = requests.post(
+            webhook_url,
+            json={"text": formatted_message},
+            timeout=15,
+        )
+        response.raise_for_status()
+    except Exception:
+        LOGGER.exception("Falha ao enviar alerta operacional para o webhook configurado.")
+
+
+def build_airflow_alert_message(context: dict[str, Any], *, event_type: str) -> tuple[str, str]:
+    dag = context.get("dag")
+    task_instance = context.get("task_instance")
+    dag_run = context.get("dag_run")
+    exception = context.get("exception")
+
+    dag_id = dag.dag_id if dag is not None else context.get("dag_id", "unknown_dag")
+    task_id = task_instance.task_id if task_instance is not None else "unknown_task"
+    run_id = dag_run.run_id if dag_run is not None else "unknown_run"
+    try_number = task_instance.try_number if task_instance is not None else "unknown_try"
+    log_url = getattr(task_instance, "log_url", None)
+
+    title = f"Airflow {event_type}: {dag_id}.{task_id}"
+    message_lines = [
+        f"dag_id={dag_id}",
+        f"task_id={task_id}",
+        f"run_id={run_id}",
+        f"try_number={try_number}",
+    ]
+
+    if exception is not None:
+        message_lines.append(f"exception={exception}")
+    if log_url:
+        message_lines.append(f"log_url={log_url}")
+
+    return title, "\n".join(message_lines)
+
+
+def airflow_failure_alert_callback(context: dict[str, Any]) -> None:
+    title, message = build_airflow_alert_message(context, event_type="FAILURE")
+    send_operational_alert(title=title, message=message, severity="ERROR")
+
+
+def airflow_retry_alert_callback(context: dict[str, Any]) -> None:
+    title, message = build_airflow_alert_message(context, event_type="RETRY")
+    send_operational_alert(title=title, message=message, severity="WARNING")
+
+
 def run_dbt_command(
     *,
     dbt_project_dir: str,
@@ -161,6 +223,7 @@ def run_airbyte_cloud_sync(
     job_result = wait_for_airbyte_cloud_job(
         api_base_url=api_base_url,
         access_token=access_token,
+        connection_id=connection_id,
         job_id=job_id,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
@@ -593,6 +656,7 @@ def wait_for_airbyte_cloud_job(
     *,
     api_base_url: str,
     access_token: str,
+    connection_id: str,
     job_id: int,
     timeout_seconds: int,
     poll_interval_seconds: int,
@@ -625,13 +689,36 @@ def wait_for_airbyte_cloud_job(
 
         if normalized_status in {"failed", "cancelled", "canceled"}:
             raise AirflowFailException(
-                f"Job do Airbyte Cloud falhou. job_id={job_id} status={normalized_status}"
+                f"Job do Airbyte Cloud falhou. "
+                f"connection_id={connection_id} job_id={job_id} status={normalized_status}"
             )
 
         time.sleep(poll_interval_seconds)
 
+    last_status = None
+    try:
+        response = requests.get(
+            f"{api_base_url}/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        raw_status = (
+            payload.get("status")
+            or payload.get("job", {}).get("status")
+            or payload.get("job", {}).get("job", {}).get("status")
+        )
+        last_status = str(raw_status or "").strip().lower() or "unknown"
+    except Exception:
+        LOGGER.exception("Falha ao consultar status final do job do Airbyte Cloud apos timeout.")
+        last_status = "unknown"
+
     raise AirflowFailException(
-        f"Timeout aguardando job do Airbyte Cloud. job_id={job_id} timeout_seconds={timeout_seconds}"
+        "Timeout aguardando job do Airbyte Cloud. "
+        f"connection_id={connection_id} job_id={job_id} "
+        f"timeout_seconds={timeout_seconds} last_status={last_status}. "
+        "Acao recomendada: verificar o job no Airbyte antes de relancar a DAG."
     )
 
 
@@ -728,6 +815,23 @@ when not matched then insert (
     src.UPDATED_AT
 )
 """
+
+
+def execute_snowflake_sql(*, sql: str) -> dict[str, int | None]:
+    connection = None
+    cursor = None
+    try:
+        connection = open_snowflake_connection()
+        cursor = connection.cursor()
+        cursor.execute(sql)
+        rows_affected = cursor.rowcount
+        connection.commit()
+        return {"rows_affected": int(rows_affected) if rows_affected is not None else None}
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if connection is not None:
+            connection.close()
 
 
 def load_dbt_run_results(run_results_path: Path) -> dict[str, Any]:
