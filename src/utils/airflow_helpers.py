@@ -288,7 +288,6 @@ def audit_load_audit(
     status: str,
     rows_processed: int | None = None,
     details: str | None = None,
-    id_cliente: int | None = None,
     execution_order: int | None = None,
     duration_seconds: int | None = None,
     started_at: datetime | None = None,
@@ -305,7 +304,6 @@ def audit_load_audit(
         escaped_target_name = target_name.replace("'", "''")
         escaped_status = status.replace("'", "''")
         escaped_details = details.replace("'", "''") if details else None
-        dt_fim_value = "null" if status == "STARTED" else "current_date()"
 
         started_at_sql = f"'{started_at.isoformat()}'::timestamp_ntz" if started_at else "convert_timezone('UTC', current_timestamp())::timestamp_ntz"
         ended_at_sql = f"'{ended_at.isoformat()}'::timestamp_ntz" if ended_at else ("null" if status == "STARTED" else "convert_timezone('UTC', current_timestamp())::timestamp_ntz")
@@ -320,9 +318,6 @@ insert into SOLIX_BI.DS.CTL_LOAD_AUDIT (
     ROWS_PROCESSED,
     EVENT_TIME,
     DETAILS,
-    ID_CLIENTE,
-    DT_INICIO,
-    DT_FIM,
     EXECUTION_ORDER,
     DURATION_SECONDS,
     STARTED_AT,
@@ -336,9 +331,6 @@ insert into SOLIX_BI.DS.CTL_LOAD_AUDIT (
     {rows_processed if rows_processed is not None else 'null'},
     convert_timezone('UTC', current_timestamp())::timestamp_ntz,
     {f"'{escaped_details}'" if escaped_details is not None else 'null'},
-    {id_cliente if id_cliente is not None else 'null'},
-    current_date(),
-    {dt_fim_value},
     {execution_order if execution_order is not None else 'null'},
     {duration_seconds if duration_seconds is not None else 'null'},
     {started_at_sql},
@@ -362,7 +354,6 @@ def audit_batch_execution_start(
     source_name: str,
     target_name: str,
     orchestration_type: str | None = None,
-    id_cliente: int | None = None,
 ) -> None:
     connection = None
     cursor = None
@@ -390,9 +381,6 @@ using (
         null as ROWS_EXTRACTED,
         null as ROWS_LOADED,
         null as ERROR_MESSAGE,
-        {id_cliente if id_cliente is not None else 'null'} as ID_CLIENTE,
-        current_date() as DT_INICIO,
-        null as DT_FIM,
         null as DURATION_SECONDS,
         {f"'{escaped_orchestration_type}'" if escaped_orchestration_type else 'null'} as ORCHESTRATION_TYPE
 ) as src
@@ -401,8 +389,6 @@ when matched then update set
     tgt.STATUS = src.STATUS,
     tgt.STARTED_AT = src.STARTED_AT,
     tgt.ERROR_MESSAGE = src.ERROR_MESSAGE,
-    tgt.ID_CLIENTE = src.ID_CLIENTE,
-    tgt.DT_INICIO = src.DT_INICIO,
     tgt.ORCHESTRATION_TYPE = src.ORCHESTRATION_TYPE
 when not matched then insert (
     BATCH_ID,
@@ -415,9 +401,6 @@ when not matched then insert (
     ROWS_EXTRACTED,
     ROWS_LOADED,
     ERROR_MESSAGE,
-    ID_CLIENTE,
-    DT_INICIO,
-    DT_FIM,
     DURATION_SECONDS,
     ORCHESTRATION_TYPE
 ) values (
@@ -431,9 +414,6 @@ when not matched then insert (
     src.ROWS_EXTRACTED,
     src.ROWS_LOADED,
     src.ERROR_MESSAGE,
-    src.ID_CLIENTE,
-    src.DT_INICIO,
-    src.DT_FIM,
     src.DURATION_SECONDS,
     src.ORCHESTRATION_TYPE
 )
@@ -459,7 +439,6 @@ def audit_batch_execution_end(
     rows_extracted: int | None = None,
     rows_loaded: int | None = None,
     duration_seconds: int | None = None,
-    id_cliente: int | None = None,
 ) -> None:
     connection = None
     cursor = None
@@ -488,9 +467,6 @@ using (
         {rows_extracted if rows_extracted is not None else 'null'} as ROWS_EXTRACTED,
         {rows_loaded if rows_loaded is not None else 'null'} as ROWS_LOADED,
         {f"'{escaped_error_message}'" if escaped_error_message is not None else 'null'} as ERROR_MESSAGE,
-        {id_cliente if id_cliente is not None else 'null'} as ID_CLIENTE,
-        null as DT_INICIO,
-        current_date() as DT_FIM,
         {duration_seconds if duration_seconds is not None else 'null'} as DURATION_SECONDS,
         null as ORCHESTRATION_TYPE
 ) as src
@@ -501,8 +477,6 @@ when matched then update set
     tgt.ROWS_EXTRACTED = src.ROWS_EXTRACTED,
     tgt.ROWS_LOADED = src.ROWS_LOADED,
     tgt.ERROR_MESSAGE = src.ERROR_MESSAGE,
-    tgt.ID_CLIENTE = src.ID_CLIENTE,
-    tgt.DT_FIM = src.DT_FIM,
     tgt.DURATION_SECONDS = src.DURATION_SECONDS
 when not matched then insert (
     BATCH_ID,
@@ -515,9 +489,6 @@ when not matched then insert (
     ROWS_EXTRACTED,
     ROWS_LOADED,
     ERROR_MESSAGE,
-    ID_CLIENTE,
-    DT_INICIO,
-    DT_FIM,
     DURATION_SECONDS,
     ORCHESTRATION_TYPE
 ) values (
@@ -531,9 +502,6 @@ when not matched then insert (
     src.ROWS_EXTRACTED,
     src.ROWS_LOADED,
     src.ERROR_MESSAGE,
-    src.ID_CLIENTE,
-    src.DT_INICIO,
-    src.DT_FIM,
     src.DURATION_SECONDS,
     src.ORCHESTRATION_TYPE
 )

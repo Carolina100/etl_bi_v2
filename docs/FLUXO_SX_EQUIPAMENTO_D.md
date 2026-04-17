@@ -442,6 +442,32 @@ Regra:
 - `CTL_LOAD_AUDIT`
 - `CTL_BATCH_EXECUTION`
 
+Na estrutura atual, a `CTL_LOAD_AUDIT` ficou:
+
+- global por pipeline e por step
+- sem `ID_CLIENTE`
+- sem `DT_INICIO`
+- sem `DT_FIM`
+- com granularidade por evento de execucao
+
+Na estrutura atual, a `CTL_BATCH_EXECUTION` ficou:
+
+- global por pipeline
+- sem `ID_CLIENTE`
+- sem `DT_INICIO`
+- sem `DT_FIM`
+
+Ou seja, o controle macro da execucao usa:
+
+- `STARTED_AT`
+- `ENDED_AT`
+- `STATUS`
+- `ROWS_EXTRACTED`
+- `ROWS_LOADED`
+- `ERROR_MESSAGE`
+- `DURATION_SECONDS`
+- `ORCHESTRATION_TYPE`
+
 ### No Airbyte
 
 A extracao registra:

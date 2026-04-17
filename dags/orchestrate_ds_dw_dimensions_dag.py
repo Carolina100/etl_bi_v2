@@ -6,10 +6,8 @@ from datetime import datetime
 from typing import Any
 
 from airflow import DAG
-from airflow.models.taskinstance import TaskInstance
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
-from airflow.settings import Session
 from airflow.task.trigger_rule import TriggerRule
 
 from src.utils.airflow_helpers import (
@@ -41,34 +39,23 @@ def register_batch_start(**context: Any) -> dict[str, Any]:
 
 def register_batch_end(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
-    session = Session()
-    task_instances = {}
-    try:
-        if dag_run is not None:
-            rows = (
-                session.query(TaskInstance)
-                .filter(
-                    TaskInstance.dag_id == dag_run.dag_id,
-                    TaskInstance.run_id == dag_run.run_id,
-                    TaskInstance.task_id.in_([
-                        "trigger_load_ds_airbyte",
-                        "trigger_load_dw_dbt",
-                        "cleanup_raw_after_success",
-                    ]),
-                )
-                .all()
-            )
-            task_instances = {task_instance.task_id: task_instance for task_instance in rows}
-    finally:
-        session.close()
+    ti_context = context["ti"]
+    task_results = {
+        task_id: ti_context.xcom_pull(task_ids=task_id)
+        for task_id in ("trigger_load_ds_airbyte", "trigger_load_dw_dbt", "cleanup_raw_after_success")
+    }
 
-    task_states = []
-    for task_id in ("trigger_load_ds_airbyte", "trigger_load_dw_dbt", "cleanup_raw_after_success"):
-        ti = task_instances.get(task_id)
-        if ti is not None and ti.state is not None:
-            task_states.append((task_id, ti.state))
+    failed_tasks = []
+    for task_id, result in task_results.items():
+        if result is None:
+            failed_tasks.append(task_id)
+            continue
+        if isinstance(result, dict):
+            normalized_status = str(result.get("status", "")).upper()
+            if normalized_status in {"SUCCESS", "SKIPPED"}:
+                continue
+        failed_tasks.append(task_id)
 
-    failed_tasks = [task_id for task_id, state in task_states if state not in {"success", "skipped"}]
     status = "SUCCESS" if not failed_tasks else "FAILED"
     error_message = None
     if failed_tasks:

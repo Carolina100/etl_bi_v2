@@ -5,9 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from airflow import DAG
-from airflow.models.taskinstance import TaskInstance
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.settings import Session
 from airflow.task.trigger_rule import TriggerRule
 
 from src.utils.airflow_helpers import (
@@ -128,38 +126,25 @@ def register_cleanup_batch_start(**context: Any) -> dict[str, Any]:
 
 def register_cleanup_batch_end(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
-    session = Session()
-    task_instances = {}
-    try:
-        rows = (
-            session.query(TaskInstance)
-            .filter(
-                TaskInstance.dag_id == dag_run.dag_id,
-                TaskInstance.run_id == dag_run.run_id,
-                TaskInstance.task_id.in_([spec["task_id"] for spec in RETENTION_SPECS]),
-            )
-            .all()
-        )
-        task_instances = {task_instance.task_id: task_instance for task_instance in rows}
-    finally:
-        session.close()
-
-    task_states = []
-    for spec in RETENTION_SPECS:
-        ti = task_instances.get(spec["task_id"])
-        if ti is not None and ti.state is not None:
-            task_states.append((spec["task_id"], ti.state))
-
-    failed_tasks = [task_id for task_id, state in task_states if state not in {"success", "skipped"}]
-    status = "SUCCESS" if not failed_tasks else "FAILED"
-    error_message = None if not failed_tasks else f"tasks failed: {', '.join(failed_tasks)}"
-
     total_rows_deleted = 0
     ti_context = context["ti"]
+    failed_tasks = []
     for spec in RETENTION_SPECS:
         result = ti_context.xcom_pull(task_ids=spec["task_id"])
-        if isinstance(result, dict) and result.get("rows_affected") is not None:
-            total_rows_deleted += int(result["rows_affected"])
+        if result is None:
+            failed_tasks.append(spec["task_id"])
+            continue
+        if isinstance(result, dict):
+            normalized_status = str(result.get("status", "")).upper()
+            if normalized_status not in {"SUCCESS", "SKIPPED"}:
+                failed_tasks.append(spec["task_id"])
+            if result.get("rows_affected") is not None:
+                total_rows_deleted += int(result["rows_affected"])
+            continue
+        failed_tasks.append(spec["task_id"])
+
+    status = "SUCCESS" if not failed_tasks else "FAILED"
+    error_message = None if not failed_tasks else f"tasks failed: {', '.join(failed_tasks)}"
 
     batch_start_time_seconds = dag_run.start_date.timestamp() if dag_run.start_date else time.time()
     duration_seconds = int(time.time() - batch_start_time_seconds)
