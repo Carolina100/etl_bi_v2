@@ -6,12 +6,14 @@ from datetime import datetime
 from typing import Any
 
 from airflow import DAG
+from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.task.trigger_rule import TriggerRule
 
 from src.utils.airflow_helpers import (
     airflow_failure_alert_callback,
+    airflow_retry_alert_callback,
     audit_batch_execution_end,
     audit_batch_execution_start,
     audit_load_audit,
@@ -78,6 +80,8 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
         error_message=error_message,
         duration_seconds=duration_seconds,
     )
+    if status == "FAILED":
+        raise AirflowFailException(error_message or "Falha na orquestracao DS->DW.")
     return {"status": status}
 
 
@@ -155,7 +159,13 @@ with DAG(
     catchup=False,
     max_active_runs=1,
     tags=["orchestration", "airbyte", "dbt", "dimensions"],
-    default_args={"email_on_failure": False, "email_on_retry": False, "retries": 0},
+    default_args={
+        "email_on_failure": False,
+        "email_on_retry": False,
+        "retries": 0,
+        "on_failure_callback": airflow_failure_alert_callback,
+        "on_retry_callback": airflow_retry_alert_callback,
+    },
     on_failure_callback=airflow_failure_alert_callback,
     params={
         "airbyte_connection_id": "",

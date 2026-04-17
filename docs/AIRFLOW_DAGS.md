@@ -233,7 +233,7 @@ Esse desenho preserva a separacao de responsabilidade:
 
 ## Limites de responsabilidade
 
-- Airflow nao implementa extracao customizada de Oracle ou PostgreSQL
+- Airflow nao implementa extracao customizada de fontes neste repositorio
 - Airflow apenas integra com a API do Airbyte quando a sync precisa entrar no mesmo fluxo orquestrado
 - transformacoes e modelagem continuam no `dbt`
 

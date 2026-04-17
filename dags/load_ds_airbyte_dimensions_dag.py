@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from airflow import DAG
+from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.task.trigger_rule import TriggerRule
 
 from src.utils.airflow_helpers import (
     airflow_failure_alert_callback,
@@ -13,6 +15,7 @@ from src.utils.airflow_helpers import (
     audit_load_audit,
     run_airbyte_cloud_sync,
     run_extract_watermark_event,
+    send_operational_alert,
 )
 
 
@@ -195,6 +198,45 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
         )
         raise
 
+
+def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
+    ti_context = context["ti"]
+    dag_run = context.get("dag_run")
+
+    task_results = {
+        "register_extract_start": ti_context.xcom_pull(task_ids="register_extract_start"),
+        "sync_ds_airbyte": ti_context.xcom_pull(task_ids="sync_ds_airbyte"),
+        "register_extract_end": ti_context.xcom_pull(task_ids="register_extract_end"),
+    }
+
+    failed_tasks: list[str] = []
+    for task_id, result in task_results.items():
+        if result is None:
+            failed_tasks.append(task_id)
+            continue
+        if isinstance(result, dict):
+            normalized_status = str(result.get("status", "")).upper()
+            if normalized_status == "SUCCESS":
+                continue
+        failed_tasks.append(task_id)
+
+    if failed_tasks:
+        title = f"Airflow DAG FAILURE: load_ds_airbyte_dimensions_dag"
+        message = "\n".join(
+            [
+                f"dag_id=load_ds_airbyte_dimensions_dag",
+                f"run_id={dag_run.run_id if dag_run is not None else 'unknown_run'}",
+                f"failed_tasks={', '.join(failed_tasks)}",
+                "observacao=dag finalizou com falha ou estado inconsistente na etapa de extracao",
+            ]
+        )
+        send_operational_alert(title=title, message=message, severity="ERROR")
+        raise AirflowFailException(
+            f"Falha na DAG de extracao Airbyte. tasks problemáticas: {', '.join(failed_tasks)}"
+        )
+
+    return {"status": "SUCCESS"}
+
 with DAG(
     dag_id="load_ds_airbyte_dimensions_dag",
     description="Executa apenas a extracao Airbyte para a trilha de dimensoes e registra metadados de extracao.",
@@ -238,4 +280,11 @@ with DAG(
         queue="dbt",
     )
 
-    register_extract_start_task >> sync_ds_airbyte >> register_extract_end_task
+    assert_airbyte_run_success_task = PythonOperator(
+        task_id="assert_airbyte_run_success",
+        python_callable=assert_airbyte_run_success,
+        queue="dbt",
+        trigger_rule=TriggerRule.ALL_DONE,
+    )
+
+    register_extract_start_task >> sync_ds_airbyte >> register_extract_end_task >> assert_airbyte_run_success_task

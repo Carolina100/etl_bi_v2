@@ -1,4 +1,4 @@
-create table if not exists SOLIX_BI.DS.SX_EQUIPAMENTO_D (
+create transient table if not exists SOLIX_BI.DS.SX_EQUIPAMENTO_D (
     ID_CLIENTE number(38, 0) not null,
     CD_EQUIPAMENTO varchar(20) not null,
     DESC_EQUIPAMENTO varchar(1000),

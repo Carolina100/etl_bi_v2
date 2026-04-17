@@ -42,6 +42,31 @@ def build_raw_cleanup_specs(*, raw_tables: list[str], entity_label: str) -> list
     return cleanup_specs
 
 
+def build_dimensions_incremental_conf(
+    *,
+    airbyte_connection_id: str,
+    models: list[str],
+    entity_label: str,
+    raw_tables: list[str],
+    watermark_pipeline_name: str,
+    dbt_vars: dict[str, Any] | None = None,
+    airbyte_timeout_seconds: int = 3600,
+    airbyte_poll_interval_seconds: int = 15,
+) -> dict[str, Any]:
+    return {
+        "airbyte_connection_id": airbyte_connection_id,
+        "models": models,
+        "dbt_vars": dbt_vars or {},
+        "cleanup_raw_specs": build_raw_cleanup_specs(
+            raw_tables=raw_tables,
+            entity_label=entity_label,
+        ),
+        "watermark_pipeline_name": watermark_pipeline_name,
+        "airbyte_timeout_seconds": airbyte_timeout_seconds,
+        "airbyte_poll_interval_seconds": airbyte_poll_interval_seconds,
+    }
+
+
 def create_orchestration_scheduler_dag(
     *,
     dag_id: str,
@@ -78,3 +103,32 @@ def create_orchestration_scheduler_dag(
         trigger_pipeline
 
     return dag
+
+
+def create_incremental_scheduler_dag(
+    *,
+    dag_id: str,
+    entity_label: str,
+    schedule: str,
+    orchestrator_dag_id: str,
+    conf: dict[str, Any],
+    tags: list[str] | None = None,
+) -> DAG:
+    scheduler_tags = [
+        "airbyte",
+        "ds",
+        "incremental",
+        "scheduler",
+        entity_label,
+    ]
+    if tags:
+        scheduler_tags.extend(tags)
+
+    return create_orchestration_scheduler_dag(
+        dag_id=dag_id,
+        description=f"Agenda a execucao incremental da trilha para {entity_label}.",
+        schedule=schedule,
+        tags=scheduler_tags,
+        orchestrator_dag_id=orchestrator_dag_id,
+        conf=conf,
+    )

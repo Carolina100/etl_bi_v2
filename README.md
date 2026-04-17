@@ -2,8 +2,8 @@
 
 Projeto de ingestao e transformacao de dados com o fluxo:
 
-- Oracle / PostgreSQL -> Airbyte -> Snowflake DS
-- Snowflake DS -> dbt -> Snowflake DW
+- Airbyte -> Snowflake RAW
+- Snowflake RAW -> dbt -> Snowflake DS -> Snowflake DW
 - Airflow orquestrando dbt localmente em Docker
 
 ## Estrutura principal
@@ -44,7 +44,7 @@ Modelo de referência para novas entidades:
 - `docker-compose.local.yml`: stack local de Airflow/dbt, Postgres e Redis
 - `infra/airflow/`: imagem base do Airflow para scheduler/webserver/triggerer
 - `infra/runtime/dbt/`: imagem do worker DW/dbt
-- `.env.local` / `.env.docker`: configuracoes separadas para Windows local e Docker local
+- `.env.docker`: configuracao da stack Docker local
 
 ## Execução local
 
@@ -52,34 +52,26 @@ Modelo de referência para novas entidades:
 
 1. instalar e subir o Airbyte localmente via `abctl`
 2. configurar Airbyte no UI em `http://localhost:8000`
-3. criar conectores de origem para Oracle e PostgreSQL
+3. criar os conectores de origem necessarios no Airbyte
 4. escrever os dados no Snowflake DS apropriado
 5. opcionalmente registrar o `connection_id` no trigger da DAG para o Airflow disparar a sync
 
-### DW
-
-```powershell
-. .\scripts\load_local_env.ps1
-cd dbt\solix_dbt
-dbt build --select .
-```
-
 ### Fluxo completo via Airflow
 
-- copiar `.env.docker.example` para `.env.docker`
 - preparar `.env.docker` e a chave em `secrets/snowflake/ETL_KEYPAIR.p8`
 - subir o Airbyte localmente via `abctl`
 - subir a stack do Airflow com `docker compose -f docker-compose.local.yml up --build -d`
 - acessar Airflow em `http://localhost:8080`
-- usar `load_dw_dbt_dag` para execucao manual sob demanda
-- usar `schedule_sx_estado_d_incremental_dag` para o disparo frequente
-- usar `schedule_sx_estado_d_full_dag` para a reconciliacao full diaria
+- usar `load_dw_dbt_dimensions_dag` para execucao manual do dbt
+- usar `load_ds_airbyte_dimensions_dag` para execucao manual de extracao
+- usar `orchestrate_ds_dw_dimensions_dag` para o fluxo fim a fim
+- usar `schedule_sx_equipamento_d_incremental_dag` para o agendamento frequente do equipamento
 
 ### Fluxo local com Airbyte
 
 - subir o Airbyte localmente via `abctl`
 - abrir o Airbyte UI em `http://localhost:8000`
-- configurar conectores Oracle e PostgreSQL para Snowflake DS
+- configurar os conectores necessarios para Snowflake RAW
 - usar o mesmo destino Snowflake DS que o dbt consome
 - o código Python de ingestão foi removido nesta versão para privilegiar Airbyte
 
@@ -87,11 +79,9 @@ dbt build --select .
 
 - padrão: configurado por stream no Airbyte
 - transformação incremental: implementada no `dbt` a partir do `DS`
-- para `SX_ESTADO_D`, usar modo hibrido:
-  - sync incremental no dia a dia
-  - reconciliacao full periodica para permitir `FG_ATIVO = 0` em ausentes
+- para `SX_EQUIPAMENTO_D`, o `DS` mantém current-state e o `DW` faz incremental pelo watermark
 - documentação detalhada:
-  - `docs/INCREMENTAL_LOADING.md`
+  - `docs/FLUXO_SX_EQUIPAMENTO_D.md`
 
 ### Filas e workers
 
@@ -142,7 +132,7 @@ O projeto ja esta preparado para:
 
 ## Ajustes de schema do DS
 
-Para `SX_ESTADO_D`, o padrão técnico atual no BI considera:
+Para `SX_EQUIPAMENTO_D`, o padrão técnico atual no BI considera:
 
 - `BI_CREATED_AT`
 - `BI_UPDATED_AT`

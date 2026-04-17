@@ -60,34 +60,14 @@ Recomendacao:
 
 ## Arquivos de ambiente
 
-Para evitar trocar caminhos manualmente entre Windows e Docker:
+Para a stack local atual:
 
-- use `.env.local` para execucao local fora de container
 - use `.env.docker` para a stack Docker local
-
-Arquivos de exemplo:
-
-- [.env.local.example](../.env.local.example)
-- [.env.docker.example](../.env.docker.example)
-
-Scripts de apoio:
-
-- [switch_env_local.ps1](../scripts/switch_env_local.ps1)
-- [switch_env_docker.ps1](../scripts/switch_env_docker.ps1)
 
 Uso recomendado:
 
-1. copiar `.env.local.example` para `.env.local`
-2. copiar `.env.docker.example` para `.env.docker`
-3. preencher os valores reais
-4. usar o arquivo certo para cada tipo de execucao
-
-Exemplo:
-
-- Windows local:
-  `. .\scripts\switch_env_local.ps1`
-- Docker local:
-  `. .\scripts\switch_env_docker.ps1`
+1. preencher os valores reais em `.env.docker`
+2. subir a stack com `docker compose -f docker-compose.local.yml up --build -d`
 
 ## Como subir
 

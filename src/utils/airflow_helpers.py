@@ -104,7 +104,10 @@ def run_dbt_command(
     ensure_env_var("SNOWFLAKE_ROLE_DBT")
     ensure_env_var("SNOWFLAKE_PRIVATE_KEY_PATH")
 
-    target_dir = Path(dbt_project_dir) / f"target_airflow_{uuid.uuid4().hex[:8]}"
+    project_path = Path(dbt_project_dir)
+    clear_stale_dbt_artifacts(project_path)
+
+    target_dir = project_path / f"target_airflow_{uuid.uuid4().hex[:8]}"
     target_dir.mkdir(parents=True, exist_ok=True)
 
     command = ["dbt", "build", "--no-partial-parse", "--select", *select_models]
@@ -148,6 +151,13 @@ def run_dbt_command(
     finally:
         if target_dir.exists():
             shutil.rmtree(target_dir, ignore_errors=True)
+
+
+def clear_stale_dbt_artifacts(project_path: Path) -> None:
+    for artifact_dir_name in ("target", "logs"):
+        artifact_dir = project_path / artifact_dir_name
+        if artifact_dir.exists():
+            shutil.rmtree(artifact_dir, ignore_errors=True)
 
 
 def run_extract_watermark_event(

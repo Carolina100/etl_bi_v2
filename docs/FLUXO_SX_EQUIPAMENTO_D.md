@@ -387,7 +387,7 @@ Fluxo:
 
 1. limpa `DS`
 
-Sem schedule automatico no momento.
+Com `schedule` diario proprio em `50 23 * * *`.
 
 ---
 
@@ -413,17 +413,17 @@ Implementacao:
 
 Regra atual:
 
-- manter 1 dia
+- manter apenas o dia atual
 
 Implementacao:
 
-- cleanup por `BI_UPDATED_AT`
+- cleanup por dia calendario sobre `BI_UPDATED_AT`
 
 Exemplo:
 
 ```sql
 delete from SOLIX_BI.DS.SX_EQUIPAMENTO_D
-where BI_UPDATED_AT < dateadd(day, -1, current_timestamp())
+where cast(BI_UPDATED_AT as date) < current_date()
 ```
 
 ### `DW`

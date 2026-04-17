@@ -4,7 +4,7 @@ Este documento define o uso do Airbyte como camada oficial de ingestao do projet
 
 O desenho alvo e:
 
-- Oracle / PostgreSQL -> Airbyte -> Snowflake RAW/landing
+- fontes externas -> Airbyte -> Snowflake RAW/landing
 - Snowflake RAW/landing -> dbt -> Snowflake DS -> Snowflake DW
 - Airflow orquestrando o `dbt` e, quando necessario, coordenando a execucao dos jobs do Airbyte
 
@@ -16,7 +16,7 @@ A responsabilidade da ingestao fica no Airbyte.
 Padronizar a ingestao de dados em `DS` com uma ferramenta propria para replicacao, reduzindo acoplamento entre:
 
 - codigo da pipeline
-- conectividade com fontes Oracle/PostgreSQL
+- conectividade com fontes externas
 - controle de carga
 - manutencao operacional
 
@@ -31,7 +31,7 @@ Com isso:
 No contexto deste repositorio:
 
 - Airbyte e a rota principal de ingestao da camada tecnica de aterrissagem
-- a DAG local principal continua sendo `load_dw_dbt_dimensions_dag`
+- a trilha operacional ativa e a de `sx_equipamento_d`
 - o `dbt` consome tabelas aterrissadas pelo Airbyte e consolida `DS` e `DW`
 - qualquer logica de filtro incremental, CDC ou refresh deve ser preferencialmente configurada no proprio Airbyte
 
@@ -46,7 +46,7 @@ Este documento cobre:
 ### Responsabilidades
 
 - Airbyte
-  - conecta nas fontes Oracle e PostgreSQL
+  - conecta nas fontes configuradas no ambiente
   - extrai dados
   - aplica estrategia de sincronizacao definida no conector
   - grava no Snowflake na camada tecnica de aterrissagem
@@ -113,8 +113,8 @@ Ela nao representa, por si so, a arquitetura final de producao.
 
 Criar conectores separados para cada sistema de origem relevante, por exemplo:
 
-- Oracle como fonte transacional
-- PostgreSQL como fonte operacional complementar
+- uma fonte transacional principal
+- uma fonte operacional complementar, quando existir
 
 ### Destino
 
@@ -128,8 +128,8 @@ Usar Snowflake como destino da camada tecnica de aterrissagem, apontando para:
 
 Adotar uma convencao previsivel para conexoes e streams, por exemplo:
 
-- `oracle_solix_to_snowflake_ds`
-- `postgres_operacao_to_snowflake_ds`
+- `fonte_principal_to_snowflake_raw`
+- `fonte_operacional_to_snowflake_raw`
 
 ### Estrategia de sincronizacao
 
@@ -159,40 +159,21 @@ Quando a entidade exigir merge semantico antes do `DW`, o padrao recomendado e:
 - a reducao de storage deve vir de cleanup por janela tecnica
 - o dbt faz o merge para a tabela final do `DS`
 
-Exemplo adotado para a entidade piloto `SX_ESTADO_D`:
+Exemplo adotado para a entidade piloto `SX_EQUIPAMENTO_D`:
 
-- `DS.STG_SX_ESTADO_D`
-  - aterrissagem tecnica do Airbyte
-- `DS.SX_ESTADO_D`
+- `RAW.CDT_EQUIPAMENTO`
+  - aterrissagem tecnica principal do Airbyte
+- `DS.SX_EQUIPAMENTO_D`
   - tabela curada final do `DS`
-- `DW.SX_ESTADO_D`
+- `DW.SX_EQUIPAMENTO_D`
   - dimensao analitica
 
-Esse desenho evita manter uma camada `RAW` historica separada e preserva a logica de:
+Esse desenho preserva a logica de:
 
-- merge por chave natural
-- preservacao de `BI_CREATED_AT`
-- atualizacao de `BI_UPDATED_AT` quando houver mudanca real
-- inativacao de registros ausentes com `FG_ATIVO = 0`
-
-### Estrategia hibrida recomendada
-
-Para `SX_ESTADO_D`, o caminho recomendado e:
-
-- sync incremental no dia a dia
-- sync full periodica de reconciliacao
-- inativacao de ausentes apenas na rodada full
-
-Exemplo operacional:
-
-- incremental de hora em hora
-- full refresh overwrite 1x por dia
-
-Importante:
-
-- essa inativacao de ausentes so faz sentido se `DS.STG_SX_ESTADO_D` representar a foto completa da rodada
-- por isso, o modelo da `DS` so inativa ausentes quando executado com modo de reconciliacao `full`
-- nas execucoes incrementais, o modelo apenas insere novos registros e atualiza alterados
+- `RAW` tecnico e efemero
+- merge current-state no `DS`
+- incremental no `DW` a partir de `BI_UPDATED_AT`
+- cleanup do `RAW` por execucao e cleanup do `DS` por agenda separada
 
 ## Orquestracao com Airflow
 
@@ -205,8 +186,8 @@ O desenho minimo e:
 
 No estado atual do repositorio:
 
-- a DAG [load_dw_dbt_dimensions_dag.py](../dags/load_dw_dbt_dimensions_dag.py) e a DAG principal de execucao
-- as DAGs de agendamento disparam essa DAG principal com `conf` diferente para incremental e full
+- a DAG [orchestrate_ds_dw_dimensions_dag.py](../dags/orchestrate_ds_dw_dimensions_dag.py) e a DAG principal de orquestracao fim a fim
+- a DAG [schedule_sx_equipamento_d_incremental_dag.py](../dags/schedule_sx_equipamento_d_incremental_dag.py) dispara essa trilha com o `conf` do equipamento
 
 Para um desenho mais proximo de producao, o recomendado e evoluir para uma destas abordagens:
 
@@ -221,7 +202,7 @@ Se o objetivo e rastreabilidade operacional fim a fim, a melhor opcao tende a se
 - Airflow disparando a sync do Airbyte
 - Airflow aguardando sucesso da sync
 - Airflow executando `dbt build`
-- agendas separadas no Airflow para incremental e reconciliacao full
+- agenda operacional incremental no Airflow para a entidade
 
 Assim o estado da execucao fica concentrado num unico orquestrador, sem trazer a logica de extracao de volta para Python.
 
@@ -304,12 +285,12 @@ Para este projeto funcionar bem com Airbyte:
 ### Desenvolvimento local
 
 1. subir a stack local
-2. configurar fonte Oracle/PostgreSQL no Airbyte
-3. configurar destino Snowflake DS
+2. configurar as fontes necessarias no Airbyte
+3. configurar destino Snowflake `RAW`
 4. executar sync manual no Airbyte
-5. validar dados no `DS`
-6. rodar `dbt build`
-7. validar tabelas `DW`
+5. validar dados no `RAW`
+6. rodar a trilha `Airbyte -> RAW -> DS -> DW`
+7. validar tabelas `DS` e `DW`
 
 ### Producao
 
@@ -318,101 +299,79 @@ Para este projeto funcionar bem com Airbyte:
 3. executar `dbt build` no `DW`
 4. registrar logs, alertas e auditoria operacional
 
-## Checklist operacional de `SX_ESTADO_D`
+## Checklist operacional de `SX_EQUIPAMENTO_D`
 
 ### 1. Preparar tabelas no Snowflake
 
 Garantir a existencia das tabelas abaixo:
 
-- `DS.STG_SX_ESTADO_D`
-- `DS.SX_ESTADO_D`
-- `DW.SX_ESTADO_D`
+- `RAW.CDT_EQUIPAMENTO`
+- `DS.SX_EQUIPAMENTO_D`
+- `DW.SX_EQUIPAMENTO_D`
 
 Script base:
 
-- [create_ds_sx_estado_d.sql](../sql/ds/create_ds_sx_estado_d.sql)
+- [create_ds_sx_equipamento_d.sql](../sql/ds/create_ds_sx_equipamento_d.sql)
 
 ### 2. Criar as duas connections no Airbyte
 
-Connection incremental:
+Connection operacional:
 
-- nome sugerido: `sx_estado_d_incremental`
-- origem: Oracle da entidade `SX_ESTADO_D`
+- origem: entidade `SX_EQUIPAMENTO_D`
 - destino: Snowflake
-- tabela destino: `SOLIX_BI.DS.STG_SX_ESTADO_D`
+- tabela destino principal: `SOLIX_BI.RAW.CDT_EQUIPAMENTO`
 - estrategia: incremental por cursor
-- frequencia: controlada pelo Airflow
-
-Connection full:
-
-- nome sugerido: `sx_estado_d_full_reconciliation`
-- origem: Oracle da entidade `SX_ESTADO_D`
-- destino: Snowflake
-- tabela destino: `SOLIX_BI.DS.STG_SX_ESTADO_D`
-- estrategia: `full refresh overwrite`
 - frequencia: controlada pelo Airflow
 
 ### 3. Alinhar o contrato da tabela de aterrissagem
 
-O modelo dbt atual espera em `DS.STG_SX_ESTADO_D` as colunas:
+O modelo dbt atual espera no `RAW` e no `DS` os contratos usados pela trilha de equipamento.
+
+Na camada final `DS.SX_EQUIPAMENTO_D`, as colunas tecnicas principais sao:
 
 - `ID_CLIENTE`
-- `CD_ESTADO`
-- `DESC_ESTADO`
+- `CD_EQUIPAMENTO`
+- `FG_ATIVO`
 - `SOURCE_UPDATED_AT`
-- `AIRBYTE_SYNCED_AT`
+- `AIRBYTE_EXTRACTED_AT`
 
 Se o Airbyte entregar nomes diferentes, ha duas opcoes aceitaveis:
 
 - ajustar o mapeamento no Airbyte para gravar com esses nomes
-- ou ajustar o modelo [ds_sx_estado_d.sql](../dbt/solix_dbt/models/staging/ds/ds_sx_estado_d.sql) para ler os nomes reais
+- ou ajustar o modelo [ds_sx_equipamento_d.sql](../dbt/solix_dbt/models/staging/ds/ds_sx_equipamento_d.sql) para ler os nomes reais
 
 ### 4. Configurar as DAGs no Airflow
 
-As DAGs de agendamento ja esperam estes nomes de connection:
+Na estrutura atual, a trilha operacional mantida no Airflow e a de `sx_equipamento_d`.
 
-- incremental:
-  - `sx_estado_d_incremental`
-- full:
-  - `sx_estado_d_full_reconciliation`
+Arquivo:
 
-Arquivos:
+- [schedule_sx_equipamento_d_incremental_dag.py](../dags/schedule_sx_equipamento_d_incremental_dag.py)
 
-- [schedule_sx_estado_d_incremental_dag.py](../dags/schedule_sx_estado_d_incremental_dag.py)
-- [schedule_sx_estado_d_full_dag.py](../dags/schedule_sx_estado_d_full_dag.py)
-
-Se os nomes das connections no Airbyte forem diferentes, atualize as DAGs ou os nomes das connections para manter consistencia.
+O `connection_id` do Airbyte fica configurado dentro da DAG de agendamento ou pode ser sobrescrito via `dag_run.conf`.
 
 ### 5. Teste ponta a ponta
 
 Teste incremental:
 
-1. executar a connection incremental no Airbyte ou disparar `schedule_sx_estado_d_incremental_dag`
-2. validar se `DS.STG_SX_ESTADO_D` recebeu dados
-3. validar se `DS.SX_ESTADO_D` inseriu novos registros e atualizou alterados
-4. validar se `FG_ATIVO` nao foi zerado por ausentes nessa rodada
-5. validar se `DW.SX_ESTADO_D` refletiu o resultado
-
-Teste full:
-
-1. executar a connection full no Airbyte ou disparar `schedule_sx_estado_d_full_dag`
-2. validar se `DS.STG_SX_ESTADO_D` recebeu a foto completa
-3. validar se `DS.SX_ESTADO_D` inativou ausentes com `FG_ATIVO = 0`
-4. validar se `DW.SX_ESTADO_D` refletiu as inativacoes
+1. executar a connection do Airbyte ou disparar `schedule_sx_equipamento_d_incremental_dag`
+2. validar se `RAW.CDT_EQUIPAMENTO` recebeu dados
+3. validar se `DS.SX_EQUIPAMENTO_D` inseriu novos registros e atualizou alterados
+4. validar se `FG_ATIVO` refletiu o current-state recebido
+5. validar se `DW.SX_EQUIPAMENTO_D` refletiu o resultado
 
 ### 6. Validacoes criticas
 
-- a connection incremental nao deve sobrescrever a `STG` ao mesmo tempo que a full estiver rodando
-- a connection full precisa entregar foto completa, nao apenas delta
+- a connection do Airbyte nao deve concorrer com outra execucao da mesma entidade
 - o cursor incremental da origem precisa estar alinhado com `SOURCE_UPDATED_AT`
-- a coluna tecnica de tempo do Airbyte precisa ser validada para preencher `AIRBYTE_SYNCED_AT` ou equivalente
+- a coluna tecnica de tempo do Airbyte precisa ser validada para preencher `AIRBYTE_EXTRACTED_AT` ou equivalente
 
 ## Resumo
 
 O posicionamento oficial deste projeto passa a ser:
 
-- Airbyte para ingestao DS
-- dbt para transformacao DW
+- Airbyte para ingestao tecnica em `RAW`
+- dbt para transformacao `RAW -> DS -> DW`
 - Airflow para orquestracao
 
 Esse desenho e mais compativel com producao do que manter extracao customizada em Python dentro do repositorio.

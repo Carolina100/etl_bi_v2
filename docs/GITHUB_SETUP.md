@@ -7,13 +7,13 @@ Este projeto ja esta preparado para ser publicado primeiro no GitHub pessoal e d
 - Use `origin` para o repositorio pessoal.
 - Use `company` para o repositorio da empresa.
 - Mantenha a branch principal como `main`.
-- Evite salvar credenciais no codigo; continue usando `.env` local e variaveis de ambiente nos ambientes corporativos.
+- Evite salvar credenciais no codigo; continue usando `.env.docker` local e variaveis de ambiente nos ambientes corporativos.
 
 ## O que ja ficou pronto
 
 - Repositorio Git inicializado localmente.
-- `.gitignore` protegendo `.env`, artefatos locais, logs, `target/` e `__pycache__/`.
-- `.env.example` criado para documentar as variaveis necessarias sem expor segredos.
+- `.gitignore` protegendo `.env.docker`, artefatos locais, logs, `target/` e `__pycache__/`.
+- `.env.docker` mantido fora do versionamento para nao expor segredos.
 - Script `scripts/setup_git_remotes.ps1` para configurar remotos de forma padronizada.
 
 ## Fluxo para o GitHub pessoal
@@ -57,7 +57,7 @@ git push -u company main
 
 ## Checklist antes de publicar
 
-- Confirmar que `.env` nao esta stageado.
+- Confirmar que `.env.docker` nao esta stageado.
 - Confirmar que `dbt/**/target/` e `dbt/**/logs/` nao entraram no commit.
 - Revisar `README.md` e nomes de projeto/empresa antes do remoto corporativo.
 - Revisar se `profiles.yml` continua lendo credenciais apenas de variaveis de ambiente.
