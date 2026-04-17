@@ -364,3 +364,21 @@ Com isso, o desenho fica mais robusto sem mudar a arquitetura principal:
 - `DS -> DW`
 - cleanup do `RAW` por execucao
 - cleanup do `DS` por agenda separada
+
+## Estrutura de Auditoria
+
+Na forma atual, as tabelas de auditoria seguem dois papeis:
+
+- `CTL_LOAD_AUDIT`
+  - event log append-only
+  - varias linhas por `BATCH_ID`
+  - cada step escreve `STARTED` e depois `SUCCESS` ou `FAILED`
+- `CTL_BATCH_EXECUTION`
+  - visao macro por execucao
+  - uma linha por `BATCH_ID`
+  - usada para status final, duracao e volume agregado
+
+Esse desenho e o que normalmente se espera em um pipeline mais proximo de producao:
+
+- uma tabela detalhada para troubleshooting por step
+- uma tabela resumida para operacao e monitoracao macro

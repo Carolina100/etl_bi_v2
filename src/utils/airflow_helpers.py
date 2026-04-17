@@ -392,14 +392,16 @@ using (
         null as ROWS_LOADED,
         null as ERROR_MESSAGE,
         null as DURATION_SECONDS,
-        {f"'{escaped_orchestration_type}'" if escaped_orchestration_type else 'null'} as ORCHESTRATION_TYPE
+        {f"'{escaped_orchestration_type}'" if escaped_orchestration_type else 'null'} as ORCHESTRATION_TYPE,
+        convert_timezone('UTC', current_timestamp())::timestamp_ntz as UPDATED_AT
 ) as src
 on tgt.BATCH_ID = src.BATCH_ID
 when matched then update set
     tgt.STATUS = src.STATUS,
     tgt.STARTED_AT = src.STARTED_AT,
     tgt.ERROR_MESSAGE = src.ERROR_MESSAGE,
-    tgt.ORCHESTRATION_TYPE = src.ORCHESTRATION_TYPE
+    tgt.ORCHESTRATION_TYPE = src.ORCHESTRATION_TYPE,
+    tgt.UPDATED_AT = src.UPDATED_AT
 when not matched then insert (
     BATCH_ID,
     PIPELINE_NAME,
@@ -412,7 +414,8 @@ when not matched then insert (
     ROWS_LOADED,
     ERROR_MESSAGE,
     DURATION_SECONDS,
-    ORCHESTRATION_TYPE
+    ORCHESTRATION_TYPE,
+    UPDATED_AT
 ) values (
     src.BATCH_ID,
     src.PIPELINE_NAME,
@@ -425,7 +428,8 @@ when not matched then insert (
     src.ROWS_LOADED,
     src.ERROR_MESSAGE,
     src.DURATION_SECONDS,
-    src.ORCHESTRATION_TYPE
+    src.ORCHESTRATION_TYPE,
+    src.UPDATED_AT
 )
 """)
         connection.commit()
@@ -478,7 +482,8 @@ using (
         {rows_loaded if rows_loaded is not None else 'null'} as ROWS_LOADED,
         {f"'{escaped_error_message}'" if escaped_error_message is not None else 'null'} as ERROR_MESSAGE,
         {duration_seconds if duration_seconds is not None else 'null'} as DURATION_SECONDS,
-        null as ORCHESTRATION_TYPE
+        null as ORCHESTRATION_TYPE,
+        convert_timezone('UTC', current_timestamp())::timestamp_ntz as UPDATED_AT
 ) as src
 on tgt.BATCH_ID = src.BATCH_ID
 when matched then update set
@@ -487,7 +492,8 @@ when matched then update set
     tgt.ROWS_EXTRACTED = src.ROWS_EXTRACTED,
     tgt.ROWS_LOADED = src.ROWS_LOADED,
     tgt.ERROR_MESSAGE = src.ERROR_MESSAGE,
-    tgt.DURATION_SECONDS = src.DURATION_SECONDS
+    tgt.DURATION_SECONDS = src.DURATION_SECONDS,
+    tgt.UPDATED_AT = src.UPDATED_AT
 when not matched then insert (
     BATCH_ID,
     PIPELINE_NAME,
@@ -500,7 +506,8 @@ when not matched then insert (
     ROWS_LOADED,
     ERROR_MESSAGE,
     DURATION_SECONDS,
-    ORCHESTRATION_TYPE
+    ORCHESTRATION_TYPE,
+    UPDATED_AT
 ) values (
     src.BATCH_ID,
     src.PIPELINE_NAME,
@@ -513,7 +520,8 @@ when not matched then insert (
     src.ROWS_LOADED,
     src.ERROR_MESSAGE,
     src.DURATION_SECONDS,
-    src.ORCHESTRATION_TYPE
+    src.ORCHESTRATION_TYPE,
+    src.UPDATED_AT
 )
 """)
         connection.commit()
@@ -777,19 +785,31 @@ using (
     select
         '{escaped_pipeline_name}' as PIPELINE_NAME,
         convert_timezone('UTC', current_timestamp())::timestamp_ntz as {timestamp_column},
+        {'convert_timezone(\'UTC\', current_timestamp())::timestamp_ntz as LAST_RUN_STARTED_AT,' if event_type == 'start' else ''}
+        {'\'RUNNING\' as LAST_RUN_STATUS,' if event_type == 'start' else ''}
+        {'null as LAST_ERROR_MESSAGE,' if event_type == 'start' else ''}
         convert_timezone('UTC', current_timestamp())::timestamp_ntz as UPDATED_AT
 ) as src
 on tgt.PIPELINE_NAME = src.PIPELINE_NAME
 when matched then update set
     tgt.{timestamp_column} = src.{timestamp_column},
+    {'tgt.LAST_RUN_STARTED_AT = src.LAST_RUN_STARTED_AT,' if event_type == 'start' else ''}
+    {'tgt.LAST_RUN_STATUS = src.LAST_RUN_STATUS,' if event_type == 'start' else ''}
+    {'tgt.LAST_ERROR_MESSAGE = src.LAST_ERROR_MESSAGE,' if event_type == 'start' else ''}
     tgt.UPDATED_AT = src.UPDATED_AT
 when not matched then insert (
     PIPELINE_NAME,
     {timestamp_column},
+    {'LAST_RUN_STARTED_AT,' if event_type == 'start' else ''}
+    {'LAST_RUN_STATUS,' if event_type == 'start' else ''}
+    {'LAST_ERROR_MESSAGE,' if event_type == 'start' else ''}
     UPDATED_AT
 ) values (
     src.PIPELINE_NAME,
     src.{timestamp_column},
+    {'src.LAST_RUN_STARTED_AT,' if event_type == 'start' else ''}
+    {'src.LAST_RUN_STATUS,' if event_type == 'start' else ''}
+    {'src.LAST_ERROR_MESSAGE,' if event_type == 'start' else ''}
     src.UPDATED_AT
 )
 """

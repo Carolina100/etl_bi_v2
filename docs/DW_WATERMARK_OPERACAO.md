@@ -14,6 +14,8 @@ O uso atual da tabela e:
 - registrar `LAST_EXTRACT_ENDED_AT`
 - registrar o ultimo `LAST_BI_UPDATED_AT` consolidado no `DW`
 - registrar o ultimo batch executado com sucesso
+- registrar o status macro da ultima execucao
+- registrar a ultima mensagem de erro, quando houver
 
 ## Tabela de controle
 
@@ -39,6 +41,8 @@ Metadados da carga `DS -> DW`:
 - `LAST_SUCCESS_BATCH_ID`
 - `LAST_LOAD_MODE`
 - `LAST_RUN_BATCH_ID`
+- `LAST_RUN_STATUS`
+- `LAST_ERROR_MESSAGE`
 - `LAST_RUN_STARTED_AT`
 - `LAST_RUN_COMMITTED_AT`
 - `UPDATED_AT`
@@ -54,6 +58,8 @@ Metadados da carga `DS -> DW`:
   - `LAST_SUCCESS_BATCH_ID`
   - `LAST_LOAD_MODE`
   - `LAST_RUN_BATCH_ID`
+  - `LAST_RUN_STATUS`
+  - `LAST_ERROR_MESSAGE`
   - `LAST_RUN_STARTED_AT`
   - `LAST_RUN_COMMITTED_AT`
   - `UPDATED_AT`
@@ -75,6 +81,8 @@ Ao final da execucao com sucesso, o modelo atualiza:
 - `LAST_SUCCESS_BATCH_ID`
 - `LAST_LOAD_MODE`
 - `LAST_RUN_BATCH_ID`
+- `LAST_RUN_STATUS`
+- `LAST_ERROR_MESSAGE`
 - `LAST_RUN_STARTED_AT`
 - `LAST_RUN_COMMITTED_AT`
 - `UPDATED_AT`
@@ -87,10 +95,22 @@ O Airflow registra:
 2. executa a sync do Airbyte
 3. `LAST_EXTRACT_ENDED_AT`
 
+No inicio da extracao, a tabela passa a refletir:
+
+- `LAST_RUN_STATUS = 'RUNNING'`
+- `LAST_ERROR_MESSAGE = null`
+
 Esse metadado:
 
 - nao substitui o cursor do Airbyte
 - serve para rastreabilidade operacional
+
+## Persistencia
+
+A `CTL_PIPELINE_WATERMARK` deve ser tratada como tabela de controle persistente.
+
+- nao deve ser `TRANSIENT`
+- nao deve entrar em politica de cleanup tecnico curta
 
 ## Fluxo operacional atual
 

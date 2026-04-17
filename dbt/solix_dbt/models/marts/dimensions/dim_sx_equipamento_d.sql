@@ -62,6 +62,8 @@
               '" ~ invocation_id ~ "' as LAST_SUCCESS_BATCH_ID,
               'INCREMENTAL_WATERMARK' as LAST_LOAD_MODE,
               '" ~ invocation_id ~ "' as LAST_RUN_BATCH_ID,
+              'SUCCESS' as LAST_RUN_STATUS,
+              null as LAST_ERROR_MESSAGE,
               convert_timezone('UTC', current_timestamp())::timestamp_ntz as LAST_RUN_STARTED_AT,
               convert_timezone('UTC', current_timestamp())::timestamp_ntz as LAST_RUN_COMMITTED_AT,
               convert_timezone('UTC', current_timestamp())::timestamp_ntz as UPDATED_AT
@@ -74,6 +76,8 @@
           tgt.LAST_SUCCESS_BATCH_ID = src.LAST_SUCCESS_BATCH_ID,
           tgt.LAST_LOAD_MODE = src.LAST_LOAD_MODE,
           tgt.LAST_RUN_BATCH_ID = src.LAST_RUN_BATCH_ID,
+          tgt.LAST_RUN_STATUS = src.LAST_RUN_STATUS,
+          tgt.LAST_ERROR_MESSAGE = src.LAST_ERROR_MESSAGE,
           tgt.LAST_RUN_STARTED_AT = src.LAST_RUN_STARTED_AT,
           tgt.LAST_RUN_COMMITTED_AT = src.LAST_RUN_COMMITTED_AT,
           tgt.UPDATED_AT = src.UPDATED_AT
@@ -83,6 +87,8 @@
           LAST_SUCCESS_BATCH_ID,
           LAST_LOAD_MODE,
           LAST_RUN_BATCH_ID,
+          LAST_RUN_STATUS,
+          LAST_ERROR_MESSAGE,
           LAST_RUN_STARTED_AT,
           LAST_RUN_COMMITTED_AT,
           UPDATED_AT
@@ -92,6 +98,8 @@
           src.LAST_SUCCESS_BATCH_ID,
           src.LAST_LOAD_MODE,
           src.LAST_RUN_BATCH_ID,
+          src.LAST_RUN_STATUS,
+          src.LAST_ERROR_MESSAGE,
           src.LAST_RUN_STARTED_AT,
           src.LAST_RUN_COMMITTED_AT,
           src.UPDATED_AT

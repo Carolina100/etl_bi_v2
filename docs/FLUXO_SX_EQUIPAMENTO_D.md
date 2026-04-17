@@ -332,6 +332,8 @@ No fim:
   - `LAST_SUCCESS_BATCH_ID`
   - `LAST_LOAD_MODE`
   - `LAST_RUN_BATCH_ID`
+  - `LAST_RUN_STATUS`
+  - `LAST_ERROR_MESSAGE`
   - `LAST_RUN_STARTED_AT`
   - `LAST_RUN_COMMITTED_AT`
   - `UPDATED_AT`
@@ -449,6 +451,8 @@ Na estrutura atual, a `CTL_LOAD_AUDIT` ficou:
 - sem `DT_INICIO`
 - sem `DT_FIM`
 - com granularidade por evento de execucao
+- com `AUDIT_EVENT_ID` tecnico para cada evento
+- com `CREATED_AT` tecnico de insercao
 
 Na estrutura atual, a `CTL_BATCH_EXECUTION` ficou:
 
@@ -456,6 +460,8 @@ Na estrutura atual, a `CTL_BATCH_EXECUTION` ficou:
 - sem `ID_CLIENTE`
 - sem `DT_INICIO`
 - sem `DT_FIM`
+- uma linha macro por `BATCH_ID`
+- com `CREATED_AT` e `UPDATED_AT` tecnicos
 
 Ou seja, o controle macro da execucao usa:
 
@@ -467,6 +473,22 @@ Ou seja, o controle macro da execucao usa:
 - `ERROR_MESSAGE`
 - `DURATION_SECONDS`
 - `ORCHESTRATION_TYPE`
+
+Leitura correta:
+
+- `CTL_LOAD_AUDIT`
+  - e um event log append-only
+  - por isso uma mesma execucao gera varias linhas
+  - exemplo:
+    - `REGISTER_EXTRACT_START STARTED`
+    - `REGISTER_EXTRACT_START SUCCESS`
+    - `AIRBYTE_SYNC STARTED`
+    - `AIRBYTE_SYNC SUCCESS` ou `FAILED`
+    - `REGISTER_EXTRACT_END STARTED`
+    - `REGISTER_EXTRACT_END SUCCESS` ou `FAILED`
+- `CTL_BATCH_EXECUTION`
+  - e a visao macro da execucao
+  - uma linha por `BATCH_ID`
 
 ### No Airbyte
 

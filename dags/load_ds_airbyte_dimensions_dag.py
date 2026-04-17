@@ -202,6 +202,7 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
 def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
     ti_context = context["ti"]
     dag_run = context.get("dag_run")
+    target_name = "RAW"
 
     task_results = {
         "register_extract_start": ti_context.xcom_pull(task_ids="register_extract_start"),
@@ -221,6 +222,30 @@ def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
         failed_tasks.append(task_id)
 
     if failed_tasks:
+        execution_order_by_task = {
+            "register_extract_start": 1,
+            "sync_ds_airbyte": 2,
+            "register_extract_end": 3,
+        }
+        step_name_by_task = {
+            "register_extract_start": "REGISTER_EXTRACT_START",
+            "sync_ds_airbyte": "AIRBYTE_SYNC",
+            "register_extract_end": "REGISTER_EXTRACT_END",
+        }
+
+        for task_id in failed_tasks:
+            audit_load_audit(
+                batch_id=dag_run.run_id,
+                step_name=step_name_by_task[task_id],
+                source_name="AIRBYTE",
+                target_name=target_name,
+                status="FAILED",
+                details="task sem sucesso explicito na DAG final de extracao",
+                execution_order=execution_order_by_task[task_id],
+                started_at=datetime.utcnow(),
+                ended_at=datetime.utcnow(),
+            )
+
         title = f"Airflow DAG FAILURE: load_ds_airbyte_dimensions_dag"
         message = "\n".join(
             [

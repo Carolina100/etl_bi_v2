@@ -6,6 +6,8 @@ create table if not exists SOLIX_BI.DS.CTL_PIPELINE_WATERMARK (
     LAST_EXTRACT_STARTED_AT timestamp_ntz,
     LAST_EXTRACT_ENDED_AT timestamp_ntz,
     LAST_RUN_BATCH_ID varchar,
+    LAST_RUN_STATUS varchar,
+    LAST_ERROR_MESSAGE varchar,
     LAST_RUN_STARTED_AT timestamp_ntz,
     LAST_RUN_COMMITTED_AT timestamp_ntz,
     UPDATED_AT timestamp_ntz,
