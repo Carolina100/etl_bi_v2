@@ -212,8 +212,8 @@ select
 
     coalesce(
         case
-            when upper(us.fg_ativo_status::text) in ('FALSE', '0', 'N') then 'I'
-            when upper(us.fg_ativo_status::text) in ('TRUE', '1', 'S') then 'A'
+            when us.fg_ativo_status = false then 'I'
+            when us.fg_ativo_status = true then 'A'
             else null
         end,
         'UNDEFINED'
@@ -226,11 +226,7 @@ select
     Mantemos a regra principal vindo da tabela de equipamento.
     */
 
-    case
-        when upper(e.fg_ativo::text) in ('TRUE', '1', 'S') then true
-        when upper(e.fg_ativo::text) in ('FALSE', '0', 'N') then false
-        else null
-    end as fg_ativo,
+    e.fg_ativo as fg_ativo,
 
     /*
     Cursor incremental para o Airbyte.

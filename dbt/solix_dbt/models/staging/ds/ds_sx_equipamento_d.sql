@@ -42,11 +42,7 @@ with raw_source as (
         cast(DESC_TIPO_EQUIPAMENTO as varchar) as DESC_TIPO_EQUIPAMENTO,
         cast(DESC_STATUS as varchar) as DESC_STATUS,
         cast(TP_USO_EQUIPAMENTO as number(38, 0)) as TP_USO_EQUIPAMENTO,
-        case
-            when upper(cast(FG_ATIVO as varchar)) = 'TRUE' then true
-            when upper(cast(FG_ATIVO as varchar)) = 'FALSE' then false
-            else try_to_boolean(cast(FG_ATIVO as varchar))
-        end as FG_ATIVO,
+        cast(FG_ATIVO as boolean) as FG_ATIVO,
         cast(SOURCE_UPDATED_AT as timestamp_ntz) as SOURCE_UPDATED_AT,
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
     from {{ RAW_SOURCE_TABLE }}

@@ -15,12 +15,12 @@ O desenho atual e:
 - [load_dw_dbt_dimensions_dag.py](../dags/load_dw_dbt_dimensions_dag.py)
 - [orchestrate_ds_dw_dimensions_dag.py](../dags/orchestrate_ds_dw_dimensions_dag.py)
 - [cleanup_dimensions_retention_dag.py](../dags/cleanup_dimensions_retention_dag.py)
-- [schedule_sx_equipamento_d_incremental_dag.py](../dags/schedule_sx_equipamento_d_incremental_dag.py)
+- [schedule_dimensions_incremental_dag.py](../dags/schedule_dimensions_incremental_dag.py)
 - [monitor_pipeline_execution_dag.py](../dags/monitor_pipeline_execution_dag.py)
 
 ## O que a DAG faz
 
-As DAGs principais ficaram separadas por produto:
+As DAGs principais ficaram separadas por responsabilidade:
 
 - `load_ds_airbyte_dimensions_dag`
   1. registra `LAST_EXTRACT_STARTED_AT`
@@ -51,7 +51,7 @@ As DAGs principais ficaram separadas por produto:
 
 Para `sx_equipamento`, o desenho de producao atual e:
 
-- `Airbyte -> RAW`: global
+- `Airbyte -> RAW`: global por dominio de dimensoes
 - `RAW -> DS`: global
 - `DS -> DW`: global
 
@@ -66,6 +66,7 @@ As DAGs de agendamento foram preparadas para:
 
 - disparar a DAG orquestradora com `conf` apropriado
 - manter a execucao operacional incremental sem duplicar a logica da execucao
+- representar o escopo real da connection do Airbyte
 
 Isso permite dois modos operacionais:
 
@@ -77,6 +78,12 @@ Isso permite dois modos operacionais:
   - o Airflow usa `orchestrate_ds_dw_dimensions_dag`
   - primeiro executa o Airbyte
   - depois executa o dbt
+
+No desenho atual de dimensoes compartilhadas:
+
+- a extracao do Airbyte e do dominio `dimensions`
+- o scheduler nao deve ter nome de entidade isolada
+- os modelos dbt continuam explicitamente listados no `conf`
 
 ## Parametros de execucao
 
@@ -126,10 +133,10 @@ Campos suportados:
   "watermark_pipeline_name": "dim_sx_equipamento_d",
   "cleanup_raw_specs": [
     {
-      "step_name": "CLEANUP_RAW_CDT_EQUIPAMENTO",
-      "target_name": "SOLIX_BI.RAW.CDT_EQUIPAMENTO",
-      "description": "cleanup tecnico do RAW de sx_equipamento_d apos sucesso do pipeline",
-      "sql": "delete from SOLIX_BI.RAW.CDT_EQUIPAMENTO"
+      "step_name": "CLEANUP_RAW_VW_SX_EQUIPAMENTO_D",
+      "target_name": "SOLIX_BI.RAW.VW_SX_EQUIPAMENTO_D",
+      "description": "cleanup tecnico do RAW de dimensions apos sucesso do pipeline",
+      "sql": "delete from SOLIX_BI.RAW.VW_SX_EQUIPAMENTO_D"
     }
   ]
 }
@@ -176,7 +183,7 @@ Para alertas operacionais por webhook, o runtime do Airflow pode conhecer:
 - usar `load_ds_airbyte_dimensions_dag` para execucoes manuais apenas de extracao
 - usar `orchestrate_ds_dw_dimensions_dag` para execucoes manuais fim a fim
 - usar `cleanup_dimensions_retention_dag` para limpeza tecnica manual de retencao
-- usar `schedule_sx_equipamento_d_incremental_dag` para o agendamento frequente do equipamento
+- usar `schedule_dimensions_incremental_dag` para o agendamento do dominio de dimensoes
 - usar `monitor_pipeline_execution_dag` para validar ausencia de execucao esperada
 
 ## Modelo operacional recomendado
@@ -193,8 +200,10 @@ Para alertas operacionais por webhook, o runtime do Airflow pode conhecer:
 - `cleanup_dimensions_retention_dag`
   - DAG separada para retencao tecnica de `DS`
   - com `schedule` diario proprio
-- `schedule_sx_equipamento_d_incremental_dag`
-  - agenda a rotina incremental do equipamento
+- `schedule_dimensions_incremental_dag`
+  - agenda a rotina incremental do dominio `dimensions`
+  - dispara uma unica connection compartilhada do Airbyte para as dimensoes
+  - recebe explicitamente os modelos dbt que pertencem ao dominio
   - nao expoe reprocessamento dbt nem `full_refresh`
 - `monitor_pipeline_execution_dag`
   - monitora ausencia de execucao esperada
@@ -209,7 +218,7 @@ Para producao, criar estes pools no Airflow:
 
 - `airbyte_sync_pool`
   - usado na task `sync_ds_airbyte`
-  - recomendacao inicial: `1` slot quando houver uma unica `connection_id` por entidade
+  - recomendacao inicial: `1` slot quando houver uma unica `connection_id` por dominio
 - `dbt_build_pool`
   - usado na task `run_dw_dbt`
   - recomendacao inicial: `2` a `4` slots, conforme capacidade do warehouse
@@ -236,6 +245,17 @@ O fluxo recomendado passa a ser:
 3. `orchestrate_ds_dw_dimensions_dag`
    - encadeia as duas DAGs acima quando o fluxo precisar ser completo
    - executa o cleanup do `RAW` ao final, apos sucesso completo, quando `cleanup_raw_specs` e informado
+
+No caso de dimensoes compartilhadas:
+
+1. `schedule_dimensions_incremental_dag`
+   - dispara a orquestracao do dominio `dimensions`
+2. `load_ds_airbyte_dimensions_dag`
+   - sincroniza a connection compartilhada do Airbyte
+3. `load_dw_dbt_dimensions_dag`
+   - executa apenas os modelos do dominio listados no `conf`
+4. `cleanup_raw_after_success`
+   - limpa as RAWs pertencentes a mesma connection, quando configurado
 
 Esse desenho preserva a separacao de responsabilidade:
 

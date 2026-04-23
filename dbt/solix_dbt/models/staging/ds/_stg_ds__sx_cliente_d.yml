@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: stg_ds__sx_cliente_d
+    description: "Staging da tabela DS de clientes."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+    columns:
+      - name: ID_CLIENTE
+        tests:
+          - not_null
+      - name: NOME_CLIENTE
+      - name: OWNER_CLIENTE
+      - name: SERVER_CLIENTE
+      - name: FG_ATIVO
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
+        tests:
+          - not_null
+      - name: SOURCE_UPDATED_AT
+        tests:
+          - not_null
+      - name: AIRBYTE_EXTRACTED_AT
+        tests:
+          - not_null

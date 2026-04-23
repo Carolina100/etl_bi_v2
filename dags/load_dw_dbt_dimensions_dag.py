@@ -48,7 +48,7 @@ def run_dbt(**context: Any) -> dict[str, Any]:
         dbt_vars = {}
 
     batch_id = get_audit_batch_id(context)
-    watermark_pipeline_name = dag_conf.get("watermark_pipeline_name")
+    watermark_pipeline_names = derive_watermark_pipeline_names(models)
     source_name = "DBT"
     details = "mode=incremental"
 
@@ -66,7 +66,7 @@ def run_dbt(**context: Any) -> dict[str, Any]:
         select_models=models,
         dbt_vars=dbt_vars,
         execution_order=1,
-        watermark_pipeline_name=watermark_pipeline_name,
+        watermark_pipeline_names=watermark_pipeline_names,
     )
 
     return execution_summary
@@ -114,7 +114,7 @@ def execute_dbt_step(
     select_models: list[str],
     dbt_vars: dict[str, Any],
     execution_order: int,
-    watermark_pipeline_name: str | None = None,
+    watermark_pipeline_names: list[str] | None = None,
 ) -> dict[str, Any]:
     step_start_time = time.time()
     started_at = datetime.utcnow()
@@ -172,12 +172,47 @@ def execute_dbt_step(
             started_at=started_at,
             ended_at=ended_at,
         )
-        mark_pipeline_watermark_failure(
-            pipeline_name=watermark_pipeline_name,
-            batch_id=batch_id,
-            error_message=str(exc),
-        )
+        for pipeline_name in watermark_pipeline_names or []:
+            mark_pipeline_watermark_failure(
+                pipeline_name=pipeline_name,
+                batch_id=batch_id,
+                error_message=str(exc),
+            )
         raise
+
+
+def derive_watermark_pipeline_names(models: list[str]) -> list[str]:
+    """
+    Converte a lista de modelos informada no dag_run.conf para os pipelines
+    dimensionais que precisam ser marcados como FAILED em caso de erro do dbt.
+
+    Exemplo:
+    - ds_sx_cliente_d -> dim_sx_cliente_d
+    - stg_ds__sx_estado_d -> dim_sx_estado_d
+    - dim_sx_equipamento_d -> dim_sx_equipamento_d
+    """
+    pipeline_names: list[str] = []
+
+    for raw_model in models:
+        model = str(raw_model).strip()
+        if not model:
+            continue
+
+        if model.startswith("dim_"):
+            candidate = model
+        elif model.startswith("stg_ds__"):
+            entity_name = model[len("stg_ds__") :]
+            candidate = f"dim_{entity_name}"
+        elif model.startswith("ds_"):
+            entity_name = model[len("ds_") :]
+            candidate = f"dim_{entity_name}"
+        else:
+            continue
+
+        if candidate not in pipeline_names:
+            pipeline_names.append(candidate)
+
+    return pipeline_names
 
 
 def parse_string_list(raw_value: Any) -> list[str]:

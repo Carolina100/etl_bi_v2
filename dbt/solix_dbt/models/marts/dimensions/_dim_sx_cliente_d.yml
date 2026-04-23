@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: dim_sx_cliente_d
+    description: "Dimensao DW de clientes alimentada a partir do DS."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+    columns:
+      - name: ID_CLIENTE
+        description: "Chave empresarial e chave da dimensao."
+        tests:
+          - not_null
+          - unique
+      - name: NOME_CLIENTE
+      - name: OWNER_CLIENTE
+      - name: SERVER_CLIENTE
+      - name: FG_ATIVO
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
+        tests:
+          - not_null

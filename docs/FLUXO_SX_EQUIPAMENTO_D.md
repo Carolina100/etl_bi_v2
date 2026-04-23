@@ -60,10 +60,7 @@ Caracteristicas:
 
 Tabelas principais do equipamento no `RAW`:
 
-- `SOLIX_BI.RAW.CDT_EQUIPAMENTO`
-- `SOLIX_BI.RAW.CDT_MODELO_EQUIPAMENTO`
-- `SOLIX_BI.RAW.CDT_TIPO_EQUIPAMENTO`
-- `SOLIX_BI.RAW.CDT_EQUIPAMENTO_HISTORICO_MOV`
+- `SOLIX_BI.RAW.VW_SX_EQUIPAMENTO_D`
 
 Comportamento:
 
@@ -352,7 +349,7 @@ O incremental do `DW` funciona em cima do:
 
 DAG:
 
-- `schedule_sx_equipamento_d_incremental_dag`
+- `schedule_dimensions_incremental_dag`
 
 Fluxo:
 

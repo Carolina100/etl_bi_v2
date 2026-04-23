@@ -6,7 +6,12 @@ sources:
     database: SOLIX_BI
     schema: DS
     tables:
+      - name: sx_cliente_d
+        identifier: SX_CLIENTE_D
+        description: "Tabela DS da entidade SX_CLIENTE_D."
+      - name: sx_estado_d
+        identifier: SX_ESTADO_D
+        description: "Tabela DS da entidade SX_ESTADO_D."
       - name: sx_equipamento_d
         identifier: SX_EQUIPAMENTO_D
         description: "Tabela DS da entidade SX_EQUIPAMENTO_D."
-

@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: dim_sx_estado_d
+    description: "Dimensao DW de estados alimentada a partir do DS."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - CD_ESTADO
+    columns:
+      - name: SK_ESTADO
+        description: "Surrogate key da dimensao."
+        tests:
+          - not_null
+          - unique
+      - name: CD_ESTADO
+        tests:
+          - not_null
+      - name: DESC_ESTADO
+      - name: DESC_ESTADO_EN_US
+      - name: DESC_ESTADO_PT_BR
+      - name: DESC_ESTADO_ES_ES
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
+        tests:
+          - not_null

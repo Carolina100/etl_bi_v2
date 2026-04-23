@@ -22,9 +22,22 @@ Arquivos-base atuais:
 - `dags/orchestrate_ds_dw_dimensions_dag.py`
 - `dags/cleanup_dimensions_retention_dag.py`
 
-Scheduler por entidade de dimensão:
+Scheduler recomendado por dominio de dimensão:
 
-- `dags/schedule_<entidade>_incremental_dag.py`
+- `dags/schedule_dimensions_incremental_dag.py`
+
+Regra nova do projeto:
+
+- se varias dimensoes compartilham a mesma connection do Airbyte, o scheduler deve ser do dominio `dimensions`
+- o Airbyte e tratado como extracao global do dominio
+- o dbt continua separado por modelos
+- nao criar scheduler por entidade quando a extracao real for compartilhada
+
+Quando novas dimensoes entrarem:
+
+- adicionar os modelos dbt no scheduler de `dimensions`
+- adicionar as RAWs correspondentes no cleanup do mesmo scheduler
+- manter um unico schedule para a connection compartilhada
 
 ### Fatos
 
@@ -43,5 +56,6 @@ Scheduler por fato:
 
 - dimensões e fatos não compartilham nomes genéricos de DAG
 - a connection do Airbyte deve ser explícita no `conf`
+- dimensões com connection compartilhada devem usar scheduler por dominio
 - para fatos, a recomendação do projeto é connection separada por fato
 - o helper `build_raw_cleanup_specs` em `dags/pipeline_patterns.py` deve ser reutilizado para novos pipelines

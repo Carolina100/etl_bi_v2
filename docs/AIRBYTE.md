@@ -161,7 +161,7 @@ Quando a entidade exigir merge semantico antes do `DW`, o padrao recomendado e:
 
 Exemplo adotado para a entidade piloto `SX_EQUIPAMENTO_D`:
 
-- `RAW.CDT_EQUIPAMENTO`
+- `RAW.VW_SX_EQUIPAMENTO_D`
   - aterrissagem tecnica principal do Airbyte
 - `DS.SX_EQUIPAMENTO_D`
   - tabela curada final do `DS`
@@ -187,7 +187,8 @@ O desenho minimo e:
 No estado atual do repositorio:
 
 - a DAG [orchestrate_ds_dw_dimensions_dag.py](../dags/orchestrate_ds_dw_dimensions_dag.py) e a DAG principal de orquestracao fim a fim
-- a DAG [schedule_sx_equipamento_d_incremental_dag.py](../dags/schedule_sx_equipamento_d_incremental_dag.py) dispara essa trilha com o `conf` do equipamento
+- a DAG [schedule_dimensions_incremental_dag.py](../dags/schedule_dimensions_incremental_dag.py) dispara o dominio `dimensions`
+- o Airbyte de dimensoes deve ser tratado como connection compartilhada do dominio, nao como connection por entidade
 
 Para um desenho mais proximo de producao, o recomendado e evoluir para uma destas abordagens:
 
@@ -202,7 +203,7 @@ Se o objetivo e rastreabilidade operacional fim a fim, a melhor opcao tende a se
 - Airflow disparando a sync do Airbyte
 - Airflow aguardando sucesso da sync
 - Airflow executando `dbt build`
-- agenda operacional incremental no Airflow para a entidade
+- agenda operacional incremental no Airflow para o dominio de dimensoes
 
 Assim o estado da execucao fica concentrado num unico orquestrador, sem trazer a logica de extracao de volta para Python.
 
@@ -305,7 +306,7 @@ Para este projeto funcionar bem com Airbyte:
 
 Garantir a existencia das tabelas abaixo:
 
-- `RAW.CDT_EQUIPAMENTO`
+- `RAW.VW_SX_EQUIPAMENTO_D`
 - `DS.SX_EQUIPAMENTO_D`
 - `DW.SX_EQUIPAMENTO_D`
 
@@ -313,13 +314,13 @@ Script base:
 
 - [create_ds_sx_equipamento_d.sql](../sql/ds/create_ds_sx_equipamento_d.sql)
 
-### 2. Criar as duas connections no Airbyte
+### 2. Criar a connection de dimensoes no Airbyte
 
 Connection operacional:
 
-- origem: entidade `SX_EQUIPAMENTO_D`
+- origem: stream `bi.vw_sx_equipamento_d` dentro da connection de `dimensions`
 - destino: Snowflake
-- tabela destino principal: `SOLIX_BI.RAW.CDT_EQUIPAMENTO`
+- tabela destino principal: `SOLIX_BI.RAW.VW_SX_EQUIPAMENTO_D`
 - estrategia: incremental por cursor
 - frequencia: controlada pelo Airflow
 
@@ -342,11 +343,11 @@ Se o Airbyte entregar nomes diferentes, ha duas opcoes aceitaveis:
 
 ### 4. Configurar as DAGs no Airflow
 
-Na estrutura atual, a trilha operacional mantida no Airflow e a de `sx_equipamento_d`.
+Na estrutura atual, a trilha operacional de dimensoes e mantida por dominio compartilhado.
 
 Arquivo:
 
-- [schedule_sx_equipamento_d_incremental_dag.py](../dags/schedule_sx_equipamento_d_incremental_dag.py)
+- [schedule_dimensions_incremental_dag.py](../dags/schedule_dimensions_incremental_dag.py)
 
 O `connection_id` do Airbyte fica configurado dentro da DAG de agendamento ou pode ser sobrescrito via `dag_run.conf`.
 
@@ -354,15 +355,15 @@ O `connection_id` do Airbyte fica configurado dentro da DAG de agendamento ou po
 
 Teste incremental:
 
-1. executar a connection do Airbyte ou disparar `schedule_sx_equipamento_d_incremental_dag`
-2. validar se `RAW.CDT_EQUIPAMENTO` recebeu dados
+1. executar a connection do Airbyte ou disparar `schedule_dimensions_incremental_dag`
+2. validar se `RAW.VW_SX_EQUIPAMENTO_D` recebeu dados
 3. validar se `DS.SX_EQUIPAMENTO_D` inseriu novos registros e atualizou alterados
 4. validar se `FG_ATIVO` refletiu o current-state recebido
 5. validar se `DW.SX_EQUIPAMENTO_D` refletiu o resultado
 
 ### 6. Validacoes criticas
 
-- a connection do Airbyte nao deve concorrer com outra execucao da mesma entidade
+- a connection do Airbyte nao deve concorrer com outra execucao do mesmo dominio
 - o cursor incremental da origem precisa estar alinhado com `SOURCE_UPDATED_AT`
 - a coluna tecnica de tempo do Airbyte precisa ser validada para preencher `AIRBYTE_EXTRACTED_AT` ou equivalente
 
