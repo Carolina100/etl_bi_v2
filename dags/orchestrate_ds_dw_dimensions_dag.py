@@ -18,6 +18,7 @@ from src.utils.airflow_helpers import (
     audit_batch_execution_start,
     audit_load_audit,
     execute_snowflake_sql,
+    mark_pipeline_watermark_failure,
 )
 
 
@@ -39,24 +40,47 @@ def register_batch_start(**context: Any) -> dict[str, Any]:
     return {"status": "STARTED", "orchestration_type": orchestration_type}
 
 
+def task_success_callback(context: dict[str, Any]) -> None:
+    """Register task success status via XCom"""
+    task_instance = context.get("task_instance")
+    if task_instance:
+        task_instance.xcom_push(key="task_status", value="SUCCESS")
+
+
+def task_failure_callback(context: dict[str, Any]) -> None:
+    """Register task failure status via XCom"""
+    task_instance = context.get("task_instance")
+    if task_instance:
+        task_instance.xcom_push(key="task_status", value="FAILED")
+    airflow_failure_alert_callback(context)
+
+
 def register_batch_end(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
-    ti_context = context["ti"]
-    task_results = {
-        task_id: ti_context.xcom_pull(task_ids=task_id)
-        for task_id in ("trigger_load_ds_airbyte", "trigger_load_dw_dbt", "cleanup_raw_after_success")
-    }
+    task_instance = context.get("task_instance")
+    ti = task_instance
+
+    if dag_run is None:
+        raise AirflowFailException("dag_run nao encontrado no contexto")
+
+    target_task_ids = [
+        "trigger_load_ds_airbyte",
+        "trigger_load_dw_dbt",
+        "cleanup_raw_after_success",
+    ]
 
     failed_tasks = []
-    for task_id, result in task_results.items():
-        if result is None:
-            failed_tasks.append(task_id)
+
+    # The orchestration is conservative: missing task status is treated as failure.
+    for task_id in target_task_ids:
+        try:
+            task_status = ti.xcom_pull(task_ids=task_id, key="task_status")
+        except Exception as exc:
+            failed_tasks.append(f"{task_id}:UNKNOWN({exc})")
             continue
-        if isinstance(result, dict):
-            normalized_status = str(result.get("status", "")).upper()
-            if normalized_status in {"SUCCESS", "SKIPPED"}:
-                continue
-        failed_tasks.append(task_id)
+
+        if task_status != "SUCCESS":
+            failed_tasks.append(f"{task_id}:{task_status or 'UNKNOWN'}")
 
     status = "SUCCESS" if not failed_tasks else "FAILED"
     error_message = None
@@ -67,7 +91,7 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
     pipeline_name = dag_conf.get("watermark_pipeline_name") or dag_run.dag_id
     source_name = "ORCHESTRATION"
     target_name = "DS->DW"
-    
+
     batch_start_time_seconds = dag_run.start_date.timestamp() if dag_run.start_date else time.time()
     duration_seconds = int(time.time() - batch_start_time_seconds)
 
@@ -80,8 +104,15 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
         error_message=error_message,
         duration_seconds=duration_seconds,
     )
+
     if status == "FAILED":
+        mark_pipeline_watermark_failure(
+            pipeline_name=pipeline_name,
+            batch_id=dag_run.run_id,
+            error_message=error_message or "Falha na orquestracao DS->DW.",
+        )
         raise AirflowFailException(error_message or "Falha na orquestracao DS->DW.")
+
     return {"status": status}
 
 
@@ -112,24 +143,39 @@ def cleanup_raw_after_success(**context: Any) -> dict[str, Any]:
             started_at=started_at,
         )
 
-        execution_result = execute_snowflake_sql(sql=spec["sql"])
-        rows_affected = execution_result.get("rows_affected")
-        if rows_affected is not None:
-            total_rows_deleted += int(rows_affected)
+        try:
+            execution_result = execute_snowflake_sql(sql=spec["sql"])
+            rows_affected = execution_result.get("rows_affected")
+            if rows_affected is not None:
+                total_rows_deleted += int(rows_affected)
 
-        audit_load_audit(
-            batch_id=batch_id,
-            step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
-            source_name="RETENTION",
-            target_name=spec["target_name"],
-            status="SUCCESS",
-            details="cleanup tecnico do RAW concluido",
-            rows_processed=rows_affected,
-            execution_order=execution_order,
-            duration_seconds=int(time.time() - step_start_time),
-            started_at=started_at,
-            ended_at=datetime.utcnow(),
-        )
+            audit_load_audit(
+                batch_id=batch_id,
+                step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
+                source_name="RETENTION",
+                target_name=spec["target_name"],
+                status="SUCCESS",
+                details="cleanup tecnico do RAW concluido",
+                rows_processed=rows_affected,
+                execution_order=execution_order,
+                duration_seconds=int(time.time() - step_start_time),
+                started_at=started_at,
+                ended_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            audit_load_audit(
+                batch_id=batch_id,
+                step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
+                source_name="RETENTION",
+                target_name=spec["target_name"],
+                status="FAILED",
+                details=str(exc),
+                execution_order=execution_order,
+                duration_seconds=int(time.time() - step_start_time),
+                started_at=started_at,
+                ended_at=datetime.utcnow(),
+            )
+            raise
         executed_targets.append(spec["target_name"])
 
     return {
@@ -175,26 +221,37 @@ with DAG(
         task_id="trigger_load_ds_airbyte",
         trigger_dag_id="load_ds_airbyte_dimensions_dag",
         conf={
+            "parent_batch_id": "{{ dag_run.run_id }}",
             "airbyte_connection_id": "{{ dag_run.conf.get('airbyte_connection_id', params.airbyte_connection_id) }}",
             "watermark_pipeline_name": "{{ dag_run.conf.get('watermark_pipeline_name', '') }}",
             "airbyte_timeout_seconds": "{{ dag_run.conf.get('airbyte_timeout_seconds', 3600) }}",
             "airbyte_poll_interval_seconds": "{{ dag_run.conf.get('airbyte_poll_interval_seconds', 15) }}",
         },
         wait_for_completion=True,
+        allowed_states=["success"],
+        failed_states=["failed"],
         poke_interval=30,
         queue="dbt",
+        on_success_callback=task_success_callback,
+        on_failure_callback=task_failure_callback,
     )
 
     trigger_load_dw_dbt = TriggerDagRunOperator(
         task_id="trigger_load_dw_dbt",
         trigger_dag_id="load_dw_dbt_dimensions_dag",
         conf={
+            "parent_batch_id": "{{ dag_run.run_id }}",
             "models": "{{ dag_run.conf.get('models', []) | tojson }}",
             "dbt_vars": "{{ dag_run.conf.get('dbt_vars', {}) | tojson }}",
+            "watermark_pipeline_name": "{{ dag_run.conf.get('watermark_pipeline_name', '') }}",
         },
         wait_for_completion=True,
+        allowed_states=["success"],
+        failed_states=["failed"],
         poke_interval=30,
         queue="dbt",
+        on_success_callback=task_success_callback,
+        on_failure_callback=task_failure_callback,
     )
 
     cleanup_raw_after_success_task = PythonOperator(
@@ -203,6 +260,8 @@ with DAG(
         queue="dbt",
         pool="retention_cleanup_pool",
         trigger_rule=TriggerRule.ALL_SUCCESS,
+        on_success_callback=task_success_callback,
+        on_failure_callback=task_failure_callback,
     )
 
     register_batch_start_task = PythonOperator(

@@ -16,6 +16,7 @@ O desenho atual e:
 - [orchestrate_ds_dw_dimensions_dag.py](../dags/orchestrate_ds_dw_dimensions_dag.py)
 - [cleanup_dimensions_retention_dag.py](../dags/cleanup_dimensions_retention_dag.py)
 - [schedule_sx_equipamento_d_incremental_dag.py](../dags/schedule_sx_equipamento_d_incremental_dag.py)
+- [monitor_pipeline_execution_dag.py](../dags/monitor_pipeline_execution_dag.py)
 
 ## O que a DAG faz
 
@@ -42,6 +43,11 @@ As DAGs principais ficaram separadas por produto:
   1. registra batch de cleanup
   2. executa deletes tecnicos por tabela do `DS`
   3. registra quantidade de linhas deletadas
+
+- `monitor_pipeline_execution_dag`
+  1. consulta a `CTL_BATCH_EXECUTION`
+  2. valida se pipelines esperados tiveram `SUCCESS` dentro da janela configurada
+  3. gera alerta quando uma execucao esperada nao aparece
 
 Para `sx_equipamento`, o desenho de producao atual e:
 
@@ -171,6 +177,7 @@ Para alertas operacionais por webhook, o runtime do Airflow pode conhecer:
 - usar `orchestrate_ds_dw_dimensions_dag` para execucoes manuais fim a fim
 - usar `cleanup_dimensions_retention_dag` para limpeza tecnica manual de retencao
 - usar `schedule_sx_equipamento_d_incremental_dag` para o agendamento frequente do equipamento
+- usar `monitor_pipeline_execution_dag` para validar ausencia de execucao esperada
 
 ## Modelo operacional recomendado
 
@@ -189,6 +196,12 @@ Para alertas operacionais por webhook, o runtime do Airflow pode conhecer:
 - `schedule_sx_equipamento_d_incremental_dag`
   - agenda a rotina incremental do equipamento
   - nao expoe reprocessamento dbt nem `full_refresh`
+- `monitor_pipeline_execution_dag`
+  - monitora ausencia de execucao esperada
+  - roda de hora em hora
+  - alerta se `dim_sx_equipamento_d` nao tiver sucesso nas ultimas 14 horas
+  - alerta se o cleanup diario nao tiver sucesso recente
+  - facts horarias devem ser adicionadas com janela menor, por exemplo 120 minutos
 
 ## Pools recomendados
 
@@ -313,6 +326,7 @@ Implementado:
 
 - callback de falha nas DAGs criticas
 - callback de retry nas DAGs de `Airbyte`, `dbt` e cleanup
+- alerta de ausencia de execucao esperada via `monitor_pipeline_execution_dag`
 - envio para webhook quando `AIRFLOW_ALERT_WEBHOOK_URL` estiver configurada
 - fallback para log quando o webhook nao estiver configurado
 
@@ -323,10 +337,7 @@ Cobertura atual:
 - `load_dw_dbt_dimensions_dag`
 - `orchestrate_ds_dw_dimensions_dag`
 - `cleanup_dimensions_retention_dag`
-
-Observacao:
-
-- o alerta de "DAG nao rodou no dia esperado" ainda depende de monitoracao complementar no Airflow ou ferramenta externa
+- `monitor_pipeline_execution_dag`
 
 ### 4. Definir fallback para timeout do Airbyte
 
@@ -355,7 +366,9 @@ Para a POC operar mais proxima de producao, esta trilha agora conta com:
 1. `schedule` ativo da `cleanup_dimensions_retention_dag`
 2. callbacks minimos de alerta para falha e retry
 3. fallback operacional explicito para timeout do Airbyte
-4. uso de `CTL_LOAD_AUDIT`, `CTL_BATCH_EXECUTION` e `CTL_PIPELINE_WATERMARK` como base de troubleshooting
+4. watermark marcado como `FAILED` em falha operacional
+5. `monitor_pipeline_execution_dag` para ausencia de execucao esperada
+6. uso de `CTL_LOAD_AUDIT`, `CTL_BATCH_EXECUTION`, `CTL_PIPELINE_WATERMARK` e `VW_PIPELINE_RUN_STATUS` como base de troubleshooting
 
 Com isso, o desenho fica mais robusto sem mudar a arquitetura principal:
 
@@ -377,8 +390,16 @@ Na forma atual, as tabelas de auditoria seguem dois papeis:
   - visao macro por execucao
   - uma linha por `BATCH_ID`
   - usada para status final, duracao e volume agregado
+- `CTL_PIPELINE_WATERMARK`
+  - estado operacional atual por pipeline
+  - guarda ultimo sucesso, ultimo status e ultima mensagem de erro
+- `VW_PIPELINE_RUN_STATUS`
+  - view operacional para juntar batch, eventos e watermark
+  - recomendada para troubleshooting rapido e dashboards simples
 
 Esse desenho e o que normalmente se espera em um pipeline mais proximo de producao:
 
 - uma tabela detalhada para troubleshooting por step
 - uma tabela resumida para operacao e monitoracao macro
+- uma tabela persistente para estado atual do pipeline
+- uma view para consulta operacional consolidada

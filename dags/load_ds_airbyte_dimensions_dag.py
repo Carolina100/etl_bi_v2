@@ -13,15 +13,23 @@ from src.utils.airflow_helpers import (
     airflow_failure_alert_callback,
     airflow_retry_alert_callback,
     audit_load_audit,
-    run_airbyte_cloud_sync,
+    mark_pipeline_watermark_failure,
+    run_airbyte_connection_sync,
     run_extract_watermark_event,
     send_operational_alert,
 )
 
 
+def get_audit_batch_id(context: dict[str, Any]) -> str:
+    dag_run = context.get("dag_run")
+    dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
+    return str(dag_conf.get("parent_batch_id") or dag_run.run_id)
+
+
 def register_extract_start(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
     dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
+    audit_batch_id = get_audit_batch_id(context)
     target_name = "RAW"
     pipeline_name = dag_conf.get("watermark_pipeline_name")
 
@@ -29,7 +37,7 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
     started_at = datetime.utcnow()
 
     audit_load_audit(
-        batch_id=dag_run.run_id,
+        batch_id=audit_batch_id,
         step_name="REGISTER_EXTRACT_START",
         source_name="AIRBYTE",
         target_name=target_name,
@@ -49,7 +57,7 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
     ended_at = datetime.utcnow()
 
     audit_load_audit(
-        batch_id=dag_run.run_id,
+        batch_id=audit_batch_id,
         step_name="REGISTER_EXTRACT_START",
         source_name="AIRBYTE",
         target_name=target_name,
@@ -67,6 +75,7 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
 def register_extract_end(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
     dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
+    audit_batch_id = get_audit_batch_id(context)
     target_name = "RAW"
     pipeline_name = dag_conf.get("watermark_pipeline_name")
 
@@ -74,7 +83,7 @@ def register_extract_end(**context: Any) -> dict[str, Any]:
     started_at = datetime.utcnow()
 
     audit_load_audit(
-        batch_id=dag_run.run_id,
+        batch_id=audit_batch_id,
         step_name="REGISTER_EXTRACT_END",
         source_name="AIRBYTE",
         target_name=target_name,
@@ -94,7 +103,7 @@ def register_extract_end(**context: Any) -> dict[str, Any]:
     ended_at = datetime.utcnow()
 
     audit_load_audit(
-        batch_id=dag_run.run_id,
+        batch_id=audit_batch_id,
         step_name="REGISTER_EXTRACT_END",
         source_name="AIRBYTE",
         target_name=target_name,
@@ -112,6 +121,7 @@ def register_extract_end(**context: Any) -> dict[str, Any]:
 def run_airbyte_sync(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
     dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
+    audit_batch_id = get_audit_batch_id(context)
 
     raw_connection_id = dag_conf.get("airbyte_connection_id")
     if isinstance(raw_connection_id, str):
@@ -143,7 +153,7 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
     started_at = datetime.utcnow()
 
     audit_load_audit(
-        batch_id=dag_run.run_id,
+        batch_id=audit_batch_id,
         step_name="AIRBYTE_SYNC",
         source_name="AIRBYTE",
         target_name=target_name,
@@ -154,7 +164,7 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
     )
 
     try:
-        result = run_airbyte_cloud_sync(
+        result = run_airbyte_connection_sync(
             connection_id=connection_id,
             timeout_seconds=timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
@@ -168,7 +178,7 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
         ended_at = datetime.utcnow()
 
         audit_load_audit(
-            batch_id=dag_run.run_id,
+            batch_id=audit_batch_id,
             step_name="AIRBYTE_SYNC",
             source_name="AIRBYTE",
             target_name=target_name,
@@ -185,7 +195,7 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
         duration_seconds = int(time.time() - step_start_time)
         ended_at = datetime.utcnow()
         audit_load_audit(
-            batch_id=dag_run.run_id,
+            batch_id=audit_batch_id,
             step_name="AIRBYTE_SYNC",
             source_name="AIRBYTE",
             target_name=target_name,
@@ -196,12 +206,18 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
             started_at=started_at,
             ended_at=ended_at,
         )
+        mark_pipeline_watermark_failure(
+            pipeline_name=pipeline_name,
+            batch_id=audit_batch_id,
+            error_message=str(exc),
+        )
         raise
 
 
 def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
     ti_context = context["ti"]
     dag_run = context.get("dag_run")
+    audit_batch_id = get_audit_batch_id(context)
     target_name = "RAW"
 
     task_results = {
@@ -222,6 +238,8 @@ def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
         failed_tasks.append(task_id)
 
     if failed_tasks:
+        dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
+        pipeline_name = dag_conf.get("watermark_pipeline_name")
         execution_order_by_task = {
             "register_extract_start": 1,
             "sync_ds_airbyte": 2,
@@ -235,7 +253,7 @@ def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
 
         for task_id in failed_tasks:
             audit_load_audit(
-                batch_id=dag_run.run_id,
+                batch_id=audit_batch_id,
                 step_name=step_name_by_task[task_id],
                 source_name="AIRBYTE",
                 target_name=target_name,
@@ -254,6 +272,11 @@ def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
                 f"failed_tasks={', '.join(failed_tasks)}",
                 "observacao=dag finalizou com falha ou estado inconsistente na etapa de extracao",
             ]
+        )
+        mark_pipeline_watermark_failure(
+            pipeline_name=pipeline_name,
+            batch_id=audit_batch_id,
+            error_message=f"Falha na DAG de extracao Airbyte. tasks: {', '.join(failed_tasks)}",
         )
         send_operational_alert(title=title, message=message, severity="ERROR")
         raise AirflowFailException(

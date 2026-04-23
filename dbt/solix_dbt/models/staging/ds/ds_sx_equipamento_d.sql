@@ -1,50 +1,25 @@
 {#
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  MODELO DS — RAW → DS (incremental por merge)                               ║
+║  MODELO DS — RAW -> DS (incremental por merge)                              ║
 ║                                                                              ║
-║  ENTIDADE COMPOSTA / CURRENT STATE                                           ║
+║  ENTIDADE CURADA NA ORIGEM                                                   ║
 ║                                                                              ║
-║  QUANDO REUTILIZAR ESTE MODELO PARA OUTRA ENTIDADE COMPOSTA, AJUSTE:        ║
-║  1. BLOCO DE CONFIGURACAO                                                    ║
-║  2. CTE base_entity_stage / latest                                           ║
-║  3. CTEs auxiliares *_stage / *_latest                                       ║
-║  4. CTE consolidated_source                                                  ║
-║  5. COMPARACAO em changed_or_new                                             ║
+║  A origem atual do Airbyte e uma view PostgreSQL ja consolidada:             ║
+║  bi.vw_sx_equipamento_d                                                      ║
 ║                                                                              ║
 ║  O QUE ESTE MODELO FAZ                                                       ║
-║  - usa uma tabela dirigente como verdade da entidade                         ║
-║  - enriquece com tabelas complementares                                      ║
-║  - calcula SOURCE_UPDATED_AT pela maior data entre as fontes                 ║
-║  - mantem 1 linha por chave natural no DS                                    ║
-║  - trata inativacao como update da mesma linha                               ║
-║  - nao faz delete fisico da entidade                                         ║
+║  - le uma RAW unica gerada pelo Airbyte                                       ║
+║  - padroniza tipos para o contrato DS                                         ║
+║  - mantem 1 linha por chave natural no DS                                     ║
+║  - trata inativacao como update da mesma linha                                ║
+║  - nao faz delete fisico da entidade                                          ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 #}
 
--- ============================================================================
--- BLOCO DE CONFIGURACAO — AJUSTE SO AQUI PARA REUSO
--- ============================================================================
-
--- Nome final da tabela no schema DS
 {% set MODEL_ALIAS = 'SX_EQUIPAMENTO_D' %}
-
--- Chave natural da entidade no DS
 {% set NATURAL_KEY_COLUMNS = ['ID_CLIENTE', 'CD_EQUIPAMENTO'] %}
-
--- Tabela dirigente: controla existencia do registro e FG_ATIVO oficial
-{% set BASE_RAW_TABLE = 'SOLIX_BI.RAW.CDT_EQUIPAMENTO' %}
-
--- Tabelas auxiliares de enriquecimento
-{% set MODELO_RAW_TABLE = 'SOLIX_BI.RAW.CDT_MODELO_EQUIPAMENTO' %}
-{% set TIPO_RAW_TABLE = 'SOLIX_BI.RAW.CDT_TIPO_EQUIPAMENTO' %}
-{% set STATUS_RAW_TABLE = 'SOLIX_BI.RAW.CDT_EQUIPAMENTO_HISTORICO_MOV' %}
-
--- Batch tecnico do dbt
+{% set RAW_SOURCE_TABLE = 'SOLIX_BI.RAW.VW_SX_EQUIPAMENTO_D' %}
 {% set BATCH_ID = invocation_id %}
-
--- Filtro temporario de tipos aceitos.
--- Se futuramente a regra for removida, elimine apenas o WHERE da base dirigente.
-{% set EQUIPAMENTO_TYPE_FILTER = "('101', '103', '104', '105', '106', '107', '108', '120', '121', '122')" %}
 
 {{ config(
     materialized='incremental',
@@ -56,187 +31,36 @@
     tags=['ds', 'incremental', MODEL_ALIAS | lower]
 ) }}
 
--- ============================================================================
--- PASSO 1 — LEITURA E DEDUPLICACAO DA TABELA DIRIGENTE
--- A tabela dirigente define:
--- - a chave natural do registro
--- - o FG_ATIVO oficial
--- - a existencia do equipamento no DS
--- ============================================================================
-
-with base_entity_stage as (
+with raw_source as (
     select
-        cast(CD_CLIENTE as number(38, 0)) as ID_CLIENTE,
+        cast(ID_CLIENTE as number(38, 0)) as ID_CLIENTE,
         cast(CD_EQUIPAMENTO as varchar(20)) as CD_EQUIPAMENTO,
         cast(DESC_EQUIPAMENTO as varchar) as DESC_EQUIPAMENTO,
         cast(CD_MODELO_EQUIPAMENTO as number(38, 0)) as CD_MODELO_EQUIPAMENTO,
-        cast(CD_TP_EQUIPAMENTO as number(38, 0)) as CD_TIPO_EQUIPAMENTO,
+        cast(DESC_MODELO_EQUIPAMENTO as varchar) as DESC_MODELO_EQUIPAMENTO,
+        cast(CD_TIPO_EQUIPAMENTO as number(38, 0)) as CD_TIPO_EQUIPAMENTO,
+        cast(DESC_TIPO_EQUIPAMENTO as varchar) as DESC_TIPO_EQUIPAMENTO,
+        cast(DESC_STATUS as varchar) as DESC_STATUS,
         cast(TP_USO_EQUIPAMENTO as number(38, 0)) as TP_USO_EQUIPAMENTO,
         case
             when upper(cast(FG_ATIVO as varchar)) = 'TRUE' then true
             when upper(cast(FG_ATIVO as varchar)) = 'FALSE' then false
             else try_to_boolean(cast(FG_ATIVO as varchar))
         end as FG_ATIVO,
-        cast(DT_UPDATED as timestamp_ntz) as DT_UPDATED,
+        cast(SOURCE_UPDATED_AT as timestamp_ntz) as SOURCE_UPDATED_AT,
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
-    from {{ BASE_RAW_TABLE }}
-    where CD_TP_EQUIPAMENTO in {{ EQUIPAMENTO_TYPE_FILTER }}
+    from {{ RAW_SOURCE_TABLE }}
 ),
 
-base_entity_latest as (
+latest_source as (
     select *
-    from base_entity_stage
+    from raw_source
     qualify row_number() over (
         partition by ID_CLIENTE, CD_EQUIPAMENTO
-        order by DT_UPDATED desc nulls last,
+        order by SOURCE_UPDATED_AT desc nulls last,
                  AIRBYTE_EXTRACTED_AT desc nulls last
     ) = 1
 ),
-
--- ============================================================================
--- PASSO 2 — LEITURA E DEDUPLICACAO DAS TABELAS AUXILIARES
--- Cada tabela auxiliar precisa entregar apenas a ultima versao por chave.
--- ============================================================================
-
-modelo_stage as (
-    select
-        cast(CD_CLIENTE as number(38, 0)) as ID_CLIENTE,
-        cast(CD_MODELO_EQUIPAMENTO as number(38, 0)) as CD_MODELO_EQUIPAMENTO,
-        cast(DESC_MODELO_EQUIPAMENTO as varchar) as DESC_MODELO_EQUIPAMENTO,
-        cast(DT_UPDATED as timestamp_ntz) as DT_UPDATED,
-        cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
-    from {{ MODELO_RAW_TABLE }}
-),
-
-modelo_latest as (
-    select *
-    from modelo_stage
-    qualify row_number() over (
-        partition by ID_CLIENTE, CD_MODELO_EQUIPAMENTO
-        order by DT_UPDATED desc nulls last,
-                 AIRBYTE_EXTRACTED_AT desc nulls last
-    ) = 1
-),
-
-tipo_stage as (
-    select
-        cast(CD_CLIENTE as number(38, 0)) as ID_CLIENTE,
-        cast(CD_TP_EQUIPAMENTO as number(38, 0)) as CD_TIPO_EQUIPAMENTO,
-        cast(DESC_TP_EQUIPAMENTO as varchar) as DESC_TIPO_EQUIPAMENTO,
-        cast(DT_UPDATED as timestamp_ntz) as DT_UPDATED,
-        cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
-    from {{ TIPO_RAW_TABLE }}
-),
-
-tipo_latest as (
-    select *
-    from tipo_stage
-    qualify row_number() over (
-        partition by ID_CLIENTE, CD_TIPO_EQUIPAMENTO
-        order by DT_UPDATED desc nulls last,
-                 AIRBYTE_EXTRACTED_AT desc nulls last
-    ) = 1
-),
-
-status_history_stage as (
-    select
-        cast(CD_CLIENTE as number(38, 0)) as ID_CLIENTE,
-        cast(CD_EQUIPAMENTO as varchar(20)) as CD_EQUIPAMENTO,
-        case
-            when upper(cast(FG_ATIVO as varchar)) = 'TRUE' then true
-            when upper(cast(FG_ATIVO as varchar)) = 'FALSE' then false
-            else null
-        end as FG_ATIVO_STATUS,
-        cast(DT_HR_UTC_MOVIMENTO as timestamp_ntz) as DT_HR_UTC_MOVIMENTO,
-        cast(DT_UPDATED as timestamp_ntz) as DT_UPDATED,
-        cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
-    from {{ STATUS_RAW_TABLE }}
-),
-
-status_last_event as (
-    select
-        ID_CLIENTE,
-        CD_EQUIPAMENTO,
-        max(DT_HR_UTC_MOVIMENTO) as DT_HR_UTC_MOVIMENTO
-    from status_history_stage
-    group by
-        ID_CLIENTE,
-        CD_EQUIPAMENTO
-),
-
-status_latest as (
-    select
-        s.ID_CLIENTE,
-        s.CD_EQUIPAMENTO,
-        s.FG_ATIVO_STATUS,
-        s.DT_HR_UTC_MOVIMENTO,
-        s.DT_UPDATED,
-        s.AIRBYTE_EXTRACTED_AT
-    from status_history_stage s
-    inner join status_last_event e
-        on s.ID_CLIENTE = e.ID_CLIENTE
-       and s.CD_EQUIPAMENTO = e.CD_EQUIPAMENTO
-       and s.DT_HR_UTC_MOVIMENTO = e.DT_HR_UTC_MOVIMENTO
-    qualify row_number() over (
-        partition by s.ID_CLIENTE, s.CD_EQUIPAMENTO
-        order by s.DT_UPDATED desc nulls last,
-                 s.AIRBYTE_EXTRACTED_AT desc nulls last
-    ) = 1
-),
-
--- ============================================================================
--- PASSO 3 — CONSOLIDACAO DA ENTIDADE
--- Aqui concentramos a regra de negocio da entidade final no DS.
--- REGRAS:
--- - FG_ATIVO sempre vem da tabela dirigente
--- - FG_ATIVO e o atributo que determina nossa logica de current-state
--- - tabelas auxiliares apenas enriquecem atributos
--- - DESC_STATUS e atributo de negocio independente, derivado da logica propria
--- - SOURCE_UPDATED_AT e calculado pela maior data entre as fontes
--- - quando a origem inativa o equipamento, a mesma linha e atualizada
--- ============================================================================
-
-consolidated_source as (
-    select
-        e.ID_CLIENTE,
-        e.CD_EQUIPAMENTO,
-        e.DESC_EQUIPAMENTO,
-        coalesce(m.CD_MODELO_EQUIPAMENTO, -1) as CD_MODELO_EQUIPAMENTO,
-        coalesce(m.DESC_MODELO_EQUIPAMENTO, 'UNDEFINED') as DESC_MODELO_EQUIPAMENTO,
-        coalesce(t.CD_TIPO_EQUIPAMENTO, -1) as CD_TIPO_EQUIPAMENTO,
-        coalesce(t.DESC_TIPO_EQUIPAMENTO, 'UNDEFINED') as DESC_TIPO_EQUIPAMENTO,
-        coalesce(case when s.FG_ATIVO_STATUS = false then 'I' else 'A' end, 'UNDEFINED') as DESC_STATUS,
-        coalesce(e.TP_USO_EQUIPAMENTO, -1) as TP_USO_EQUIPAMENTO,
-        e.FG_ATIVO,
-        greatest(
-            coalesce(e.DT_UPDATED, '1900-01-01'::timestamp_ntz),
-            coalesce(m.DT_UPDATED, '1900-01-01'::timestamp_ntz),
-            coalesce(t.DT_UPDATED, '1900-01-01'::timestamp_ntz),
-            coalesce(s.DT_HR_UTC_MOVIMENTO, '1900-01-01'::timestamp_ntz),
-            coalesce(s.DT_UPDATED, '1900-01-01'::timestamp_ntz)
-        ) as SOURCE_UPDATED_AT,
-        greatest(
-            coalesce(e.AIRBYTE_EXTRACTED_AT, '1900-01-01'::timestamp_ntz),
-            coalesce(m.AIRBYTE_EXTRACTED_AT, '1900-01-01'::timestamp_ntz),
-            coalesce(t.AIRBYTE_EXTRACTED_AT, '1900-01-01'::timestamp_ntz),
-            coalesce(s.AIRBYTE_EXTRACTED_AT, '1900-01-01'::timestamp_ntz)
-        ) as AIRBYTE_EXTRACTED_AT
-    from base_entity_latest e
-    left join modelo_latest m
-        on e.ID_CLIENTE = m.ID_CLIENTE
-       and e.CD_MODELO_EQUIPAMENTO = m.CD_MODELO_EQUIPAMENTO
-    left join tipo_latest t
-        on e.ID_CLIENTE = t.ID_CLIENTE
-       and e.CD_TIPO_EQUIPAMENTO = t.CD_TIPO_EQUIPAMENTO
-    left join status_latest s
-        on e.ID_CLIENTE = s.ID_CLIENTE
-       and e.CD_EQUIPAMENTO = s.CD_EQUIPAMENTO
-),
-
--- ============================================================================
--- PASSO 4 — ESTADO ATUAL DA TABELA DS
--- Usado para identificar apenas inserts ou updates necessarios.
--- ============================================================================
 
 current_target as (
     {% if is_incremental() %}
@@ -277,16 +101,6 @@ current_target as (
     where 1 = 0
     {% endif %}
 ),
-
--- ============================================================================
--- PASSO 5 — DETECCAO DE NOVOS OU ALTERADOS
--- REGRAS:
--- - ativo e nao existe -> insert
--- - ativo e existe -> update se houve mudanca
--- - inativo e existe -> update da mesma linha para inativo
--- - inativo e nao existe -> ignorar
--- - a mudanca de estado do registro e determinada por FG_ATIVO
--- ============================================================================
 
 changed_or_new as (
     select
@@ -334,7 +148,7 @@ changed_or_new as (
         end as BI_UPDATED_AT,
         s.SOURCE_UPDATED_AT,
         s.AIRBYTE_EXTRACTED_AT
-    from consolidated_source s
+    from latest_source s
     left join current_target t
         on s.ID_CLIENTE = t.ID_CLIENTE
        and s.CD_EQUIPAMENTO = t.CD_EQUIPAMENTO

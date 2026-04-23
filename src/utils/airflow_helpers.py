@@ -208,6 +208,26 @@ def run_extract_watermark_event(
             connection.close()
 
 
+def run_airbyte_connection_sync(
+    *,
+    connection_id: str,
+    timeout_seconds: int = 3600,
+    poll_interval_seconds: int = 15,
+) -> dict[str, Any]:
+    if os.getenv("AIRBYTE_CLOUD_CLIENT_ID") and os.getenv("AIRBYTE_CLOUD_CLIENT_SECRET"):
+        return run_airbyte_cloud_sync(
+            connection_id=connection_id,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+    return run_airbyte_self_hosted_sync(
+        connection_id=connection_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+
 def run_airbyte_cloud_sync(
     *,
     connection_id: str,
@@ -534,6 +554,65 @@ when not matched then insert (
             connection.close()
 
 
+def mark_pipeline_watermark_failure(
+    *,
+    pipeline_name: str | None,
+    batch_id: str,
+    error_message: str,
+) -> None:
+    if not pipeline_name:
+        return
+
+    connection = None
+    cursor = None
+    try:
+        connection = open_snowflake_connection()
+        cursor = connection.cursor()
+
+        escaped_pipeline_name = pipeline_name.replace("'", "''")
+        escaped_batch_id = batch_id.replace("'", "''")
+        escaped_error_message = error_message.replace("'", "''")
+
+        cursor.execute(f"""
+merge into SOLIX_BI.DS.CTL_PIPELINE_WATERMARK as tgt
+using (
+    select
+        '{escaped_pipeline_name}' as PIPELINE_NAME,
+        '{escaped_batch_id}' as LAST_RUN_BATCH_ID,
+        'FAILED' as LAST_RUN_STATUS,
+        '{escaped_error_message}' as LAST_ERROR_MESSAGE,
+        convert_timezone('UTC', current_timestamp())::timestamp_ntz as UPDATED_AT
+) as src
+on tgt.PIPELINE_NAME = src.PIPELINE_NAME
+when matched then update set
+    tgt.LAST_RUN_BATCH_ID = src.LAST_RUN_BATCH_ID,
+    tgt.LAST_RUN_STATUS = src.LAST_RUN_STATUS,
+    tgt.LAST_ERROR_MESSAGE = src.LAST_ERROR_MESSAGE,
+    tgt.UPDATED_AT = src.UPDATED_AT
+when not matched then insert (
+    PIPELINE_NAME,
+    LAST_RUN_BATCH_ID,
+    LAST_RUN_STATUS,
+    LAST_ERROR_MESSAGE,
+    UPDATED_AT
+) values (
+    src.PIPELINE_NAME,
+    src.LAST_RUN_BATCH_ID,
+    src.LAST_RUN_STATUS,
+    src.LAST_ERROR_MESSAGE,
+    src.UPDATED_AT
+)
+""")
+        connection.commit()
+    except Exception:
+        LOGGER.exception("Falha ao marcar watermark como FAILED.")
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if connection is not None:
+            connection.close()
+
+
 
 def load_all_client_ids(
     *,
@@ -587,6 +666,154 @@ from {client_source_table}
 {active_filter}
 order by {client_id_column}
 """
+
+
+def run_airbyte_self_hosted_sync(
+    *,
+    connection_id: str,
+    timeout_seconds: int = 3600,
+    poll_interval_seconds: int = 15,
+) -> dict[str, Any]:
+    api_base_url = ensure_env_var("AIRBYTE_API_URL").rstrip("/")
+
+    job_id = trigger_airbyte_self_hosted_sync(
+        api_base_url=api_base_url,
+        connection_id=connection_id,
+    )
+
+    job_result = wait_for_airbyte_self_hosted_job(
+        api_base_url=api_base_url,
+        connection_id=connection_id,
+        job_id=job_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+    final_status = job_result.get("status")
+    if final_status not in {"succeeded", "completed"}:
+        raise AirflowFailException(
+            f"Sync do Airbyte self-hosted finalizou com status invalido. "
+            f"connection_id={connection_id} job_id={job_id} status={final_status}"
+        )
+
+    return {
+        "status": "SUCCESS",
+        "connection_id": connection_id,
+        "job_id": job_id,
+        "job_status": final_status,
+        "rows_processed": job_result.get("rows_processed"),
+        "rows_synced": job_result.get("rows_synced"),
+        "rows_emitted": job_result.get("rows_emitted"),
+    }
+
+
+def build_airbyte_self_hosted_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    api_token = os.getenv("AIRBYTE_API_TOKEN")
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
+    return headers
+
+
+def trigger_airbyte_self_hosted_sync(
+    *,
+    api_base_url: str,
+    connection_id: str,
+) -> int:
+    response = requests.post(
+        f"{api_base_url}/connections/sync",
+        headers=build_airbyte_self_hosted_headers(),
+        json={"connectionId": connection_id},
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    job_payload = payload.get("job") if isinstance(payload.get("job"), dict) else payload
+    job_id = job_payload.get("id") or job_payload.get("jobId") or payload.get("jobId")
+
+    if job_id is None:
+        raise AirflowFailException(
+            f"Resposta inesperada ao disparar sync do Airbyte self-hosted: {payload}"
+        )
+
+    return int(job_id)
+
+
+def wait_for_airbyte_self_hosted_job(
+    *,
+    api_base_url: str,
+    connection_id: str,
+    job_id: int,
+    timeout_seconds: int,
+    poll_interval_seconds: int,
+) -> dict[str, Any]:
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        payload = get_airbyte_self_hosted_job_payload(
+            api_base_url=api_base_url,
+            job_id=job_id,
+        )
+
+        status = (
+            payload.get("status")
+            or payload.get("job", {}).get("status")
+            or payload.get("job", {}).get("job", {}).get("status")
+        )
+        normalized_status = str(status or "").strip().lower()
+
+        if normalized_status in {"running", "pending", "queued", "incomplete"}:
+            time.sleep(poll_interval_seconds)
+            continue
+
+        if normalized_status in {"succeeded", "completed"}:
+            details = parse_airbyte_cloud_job_details(payload)
+            return {"status": normalized_status, **details}
+
+        if normalized_status in {"failed", "cancelled", "canceled"}:
+            raise AirflowFailException(
+                f"Job do Airbyte self-hosted falhou. "
+                f"connection_id={connection_id} job_id={job_id} status={normalized_status}"
+            )
+
+        time.sleep(poll_interval_seconds)
+
+    last_status = "unknown"
+    try:
+        payload = get_airbyte_self_hosted_job_payload(
+            api_base_url=api_base_url,
+            job_id=job_id,
+        )
+        raw_status = (
+            payload.get("status")
+            or payload.get("job", {}).get("status")
+            or payload.get("job", {}).get("job", {}).get("status")
+        )
+        last_status = str(raw_status or "").strip().lower() or "unknown"
+    except Exception:
+        LOGGER.exception("Falha ao consultar status final do job do Airbyte self-hosted apos timeout.")
+
+    raise AirflowFailException(
+        "Timeout aguardando job do Airbyte self-hosted. "
+        f"connection_id={connection_id} job_id={job_id} "
+        f"timeout_seconds={timeout_seconds} last_status={last_status}. "
+        "Acao recomendada: verificar o job no Airbyte antes de relancar a DAG."
+    )
+
+
+def get_airbyte_self_hosted_job_payload(
+    *,
+    api_base_url: str,
+    job_id: int,
+) -> dict[str, Any]:
+    response = requests.post(
+        f"{api_base_url}/jobs/get",
+        headers=build_airbyte_self_hosted_headers(),
+        json={"id": job_id},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def get_airbyte_cloud_access_token(

@@ -13,8 +13,15 @@ from src.utils.airflow_helpers import (
     airflow_failure_alert_callback,
     airflow_retry_alert_callback,
     audit_load_audit,
+    mark_pipeline_watermark_failure,
     run_dbt_command,
 )
+
+
+def get_audit_batch_id(context: dict[str, Any]) -> str:
+    dag_run = context.get("dag_run")
+    dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
+    return str(dag_conf.get("parent_batch_id") or dag_run.run_id)
 
 
 def run_dbt(**context: Any) -> dict[str, Any]:
@@ -40,7 +47,8 @@ def run_dbt(**context: Any) -> dict[str, Any]:
     else:
         dbt_vars = {}
 
-    batch_id = dag_run.run_id
+    batch_id = get_audit_batch_id(context)
+    watermark_pipeline_name = dag_conf.get("watermark_pipeline_name")
     source_name = "DBT"
     details = "mode=incremental"
 
@@ -58,6 +66,7 @@ def run_dbt(**context: Any) -> dict[str, Any]:
         select_models=models,
         dbt_vars=dbt_vars,
         execution_order=1,
+        watermark_pipeline_name=watermark_pipeline_name,
     )
 
     return execution_summary
@@ -105,6 +114,7 @@ def execute_dbt_step(
     select_models: list[str],
     dbt_vars: dict[str, Any],
     execution_order: int,
+    watermark_pipeline_name: str | None = None,
 ) -> dict[str, Any]:
     step_start_time = time.time()
     started_at = datetime.utcnow()
@@ -161,6 +171,11 @@ def execute_dbt_step(
             duration_seconds=duration_seconds,
             started_at=started_at,
             ended_at=ended_at,
+        )
+        mark_pipeline_watermark_failure(
+            pipeline_name=watermark_pipeline_name,
+            batch_id=batch_id,
+            error_message=str(exc),
         )
         raise
 

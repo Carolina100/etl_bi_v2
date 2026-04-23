@@ -52,6 +52,9 @@ Metadados da carga `DS -> DW`:
 - Airflow / orquestracao:
   - `LAST_EXTRACT_STARTED_AT`
   - `LAST_EXTRACT_ENDED_AT`
+  - `LAST_RUN_STATUS = 'RUNNING'` no inicio da extracao
+  - `LAST_RUN_STATUS = 'FAILED'` quando Airbyte, dbt ou orquestracao falham
+  - `LAST_ERROR_MESSAGE` com resumo da falha operacional
 
 - dbt:
   - `LAST_BI_UPDATED_AT`
@@ -100,6 +103,13 @@ No inicio da extracao, a tabela passa a refletir:
 - `LAST_RUN_STATUS = 'RUNNING'`
 - `LAST_ERROR_MESSAGE = null`
 
+Se a esteira falhar, Airflow atualiza:
+
+- `LAST_RUN_STATUS = 'FAILED'`
+- `LAST_ERROR_MESSAGE` com a falha capturada
+- `LAST_RUN_BATCH_ID` com o batch da execucao
+- `UPDATED_AT` com o horario da atualizacao
+
 Esse metadado:
 
 - nao substitui o cursor do Airbyte
@@ -130,6 +140,15 @@ Consultar watermark atual:
 ```sql
 select *
 from SOLIX_BI.DS.CTL_PIPELINE_WATERMARK
+where PIPELINE_NAME = 'dim_sx_equipamento_d'
+;
+```
+
+Consultar status operacional consolidado:
+
+```sql
+select *
+from SOLIX_BI.DS.VW_PIPELINE_RUN_STATUS
 where PIPELINE_NAME = 'dim_sx_equipamento_d'
 ;
 ```
