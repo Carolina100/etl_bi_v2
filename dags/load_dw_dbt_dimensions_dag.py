@@ -7,12 +7,17 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from airflow import DAG
+from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
 
 from src.utils.airflow_helpers import (
+    AUDIT_STATUS_FAILED,
+    AUDIT_STATUS_STARTED,
+    AUDIT_STATUS_SUCCESS,
     airflow_failure_alert_callback,
     airflow_retry_alert_callback,
     audit_load_audit,
+    mark_pipeline_watermark_running,
     mark_pipeline_watermark_failure,
     run_dbt_command,
 )
@@ -27,9 +32,13 @@ def get_audit_batch_id(context: dict[str, Any]) -> str:
 def run_dbt(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
     dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
-    models = parse_string_list(dag_conf.get("models"))
+    models = parse_string_list(dag_conf.get("models", context["params"].get("models")))
     if not models:
-        models = ["."]
+        raise AirflowFailException(
+            "Parametro obrigatorio ausente: models. "
+            "Informe explicitamente os modelos dbt para evitar execucao ampla."
+        )
+    validate_supported_dbt_models(models)
 
     raw_dbt_vars = dag_conf.get("dbt_vars")
     if isinstance(raw_dbt_vars, str):
@@ -51,6 +60,12 @@ def run_dbt(**context: Any) -> dict[str, Any]:
     watermark_pipeline_names = derive_watermark_pipeline_names(models)
     source_name = "DBT"
     details = "mode=incremental"
+
+    for pipeline_name in watermark_pipeline_names:
+        mark_pipeline_watermark_running(
+            pipeline_name=pipeline_name,
+            batch_id=batch_id,
+        )
 
     execution_summary: dict[str, Any] = {
         "status": "SUCCESS",
@@ -78,7 +93,7 @@ with DAG(
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,
-    max_active_runs=4,
+    max_active_runs=1,
     tags=["dbt", "dw", "dimensions"],
     default_args={
         "email_on_failure": False,
@@ -124,7 +139,7 @@ def execute_dbt_step(
         step_name=step_name,
         source_name=source_name,
         target_name=target_name,
-        status="STARTED",
+        status=AUDIT_STATUS_STARTED,
         details=details,
         execution_order=execution_order,
         started_at=started_at,
@@ -140,17 +155,55 @@ def execute_dbt_step(
         )
         run_results = result.get("run_results", {})
         rows_processed = int(run_results.get("rows_affected_total") or 0)
+        success_details = build_dbt_success_details(
+            base_details=details,
+            run_results=run_results,
+            requested_models=select_models,
+        )
         duration_seconds = int(time.time() - step_start_time)
         ended_at = datetime.utcnow()
+
+        if result.get("status") != "SUCCESS":
+            failed_pipeline_names = derive_failed_watermark_pipeline_names(
+                run_results=run_results,
+                requested_pipeline_names=watermark_pipeline_names or [],
+            )
+            failure_message = build_dbt_failure_message(
+                result=result,
+                failed_pipeline_names=failed_pipeline_names,
+            )
+
+            audit_load_audit(
+                batch_id=batch_id,
+                step_name=step_name,
+                source_name=source_name,
+                target_name=target_name,
+                status=AUDIT_STATUS_FAILED,
+                rows_processed=rows_processed,
+                details=failure_message,
+                execution_order=execution_order,
+                duration_seconds=duration_seconds,
+                started_at=started_at,
+                ended_at=ended_at,
+            )
+
+            for pipeline_name in failed_pipeline_names:
+                mark_pipeline_watermark_failure(
+                    pipeline_name=pipeline_name,
+                    batch_id=batch_id,
+                    error_message=failure_message,
+                )
+
+            raise AirflowFailException(failure_message)
 
         audit_load_audit(
             batch_id=batch_id,
             step_name=step_name,
             source_name=source_name,
             target_name=target_name,
-            status="SUCCESS",
+            status=AUDIT_STATUS_SUCCESS,
             rows_processed=rows_processed,
-            details=f"{details} rows_affected={rows_processed}",
+            details=success_details,
             execution_order=execution_order,
             duration_seconds=duration_seconds,
             started_at=started_at,
@@ -158,6 +211,9 @@ def execute_dbt_step(
         )
         return {"result": result, "rows_processed": rows_processed}
     except Exception as exc:
+        if isinstance(exc, AirflowFailException):
+            raise
+
         duration_seconds = int(time.time() - step_start_time)
         ended_at = datetime.utcnow()
         audit_load_audit(
@@ -165,7 +221,7 @@ def execute_dbt_step(
             step_name=step_name,
             source_name=source_name,
             target_name=target_name,
-            status="FAILED",
+            status=AUDIT_STATUS_FAILED,
             details=str(exc),
             execution_order=execution_order,
             duration_seconds=duration_seconds,
@@ -213,6 +269,148 @@ def derive_watermark_pipeline_names(models: list[str]) -> list[str]:
             pipeline_names.append(candidate)
 
     return pipeline_names
+
+
+def derive_failed_watermark_pipeline_names(
+    *,
+    run_results: dict[str, Any],
+    requested_pipeline_names: list[str],
+) -> list[str]:
+    all_results = run_results.get("all_results") if isinstance(run_results, dict) else None
+    if not isinstance(all_results, list):
+        return requested_pipeline_names
+
+    failed_pipeline_names: list[str] = []
+
+    for result in all_results:
+        if not isinstance(result, dict):
+            continue
+
+        status = str(result.get("status") or "").lower()
+        if status in {"success", "pass", "skipped"}:
+            continue
+
+        unique_id = str(result.get("unique_id") or "")
+        matched_pipeline = match_pipeline_name_from_unique_id(
+            unique_id=unique_id,
+            requested_pipeline_names=requested_pipeline_names,
+        )
+        if matched_pipeline and matched_pipeline not in failed_pipeline_names:
+            failed_pipeline_names.append(matched_pipeline)
+
+    return failed_pipeline_names or requested_pipeline_names
+
+
+def match_pipeline_name_from_unique_id(
+    *,
+    unique_id: str,
+    requested_pipeline_names: list[str],
+) -> str | None:
+    unique_id_lower = unique_id.lower()
+
+    for pipeline_name in requested_pipeline_names:
+        pipeline_lower = pipeline_name.lower()
+        entity_name = pipeline_lower[len("dim_") :] if pipeline_lower.startswith("dim_") else pipeline_lower
+        candidates = [
+            pipeline_lower,
+            f"ds_{entity_name}",
+            f"stg_ds__{entity_name}",
+        ]
+
+        if any(candidate in unique_id_lower for candidate in candidates):
+            return pipeline_name
+
+    return None
+
+
+def build_dbt_failure_message(
+    *,
+    result: dict[str, Any],
+    failed_pipeline_names: list[str],
+) -> str:
+    failed_pipelines_text = ",".join(failed_pipeline_names) if failed_pipeline_names else "unknown"
+    return (
+        "Falha na camada DW. "
+        f"returncode={result.get('returncode')}. "
+        f"failed_pipelines={failed_pipelines_text}. "
+        f"stdout={str(result.get('stdout') or '').strip()} "
+        f"stderr={str(result.get('stderr') or '').strip()}"
+    )
+
+
+def build_dbt_success_details(
+    *,
+    base_details: str,
+    run_results: dict[str, Any],
+    requested_models: list[str],
+) -> str:
+    rows_affected_total = int(run_results.get("rows_affected_total") or 0)
+    rows_affected_final_total = int(run_results.get("rows_affected_final_total") or 0)
+    model_results = run_results.get("model_results") if isinstance(run_results, dict) else None
+    if not isinstance(model_results, list):
+        return (
+            f"{base_details} rows_affected_total={rows_affected_total} "
+            f"rows_affected={rows_affected_final_total}"
+        )
+
+    model_rows_summary: list[str] = []
+    requested_model_names = {str(model).strip() for model in requested_models if str(model).strip()}
+
+    for model_result in model_results:
+        if not isinstance(model_result, dict):
+            continue
+
+        unique_id = str(model_result.get("unique_id") or "")
+        model_name = unique_id.split(".")[-1] if unique_id else ""
+        if requested_model_names and model_name not in requested_model_names:
+            continue
+        if not model_name.startswith(("dim_", "fct_")):
+            continue
+
+        rows_affected = int(model_result.get("rows_affected") or 0)
+        rows_inserted = int(model_result.get("rows_inserted") or 0)
+        rows_updated = int(model_result.get("rows_updated") or 0)
+        rows_deleted = int(model_result.get("rows_deleted") or 0)
+
+        metrics = [f"affected={rows_affected}"]
+        if rows_inserted:
+            metrics.append(f"inserted={rows_inserted}")
+        if rows_updated:
+            metrics.append(f"updated={rows_updated}")
+        if rows_deleted:
+            metrics.append(f"deleted={rows_deleted}")
+
+        model_rows_summary.append(f"{model_name}({';'.join(metrics)})")
+
+    if not model_rows_summary:
+        return (
+            f"{base_details} rows_affected_total={rows_affected_total} "
+            f"rows_affected={rows_affected_final_total}"
+        )
+
+    return (
+        f"{base_details} rows_affected_total={rows_affected_total} "
+        f"rows_affected={rows_affected_final_total} "
+        f"models={','.join(model_rows_summary)}"
+    )
+
+
+def validate_supported_dbt_models(models: list[str]) -> None:
+    invalid_models = [
+        model for model in models
+        if not (
+            model.startswith("ds_")
+            or model.startswith("stg_ds__")
+            or model.startswith("dim_")
+        )
+    ]
+
+    if invalid_models:
+        raise AirflowFailException(
+            "Foram informados modelos dbt invalidos para a trilha de dimensoes: "
+            f"{', '.join(invalid_models)}. "
+            "Apenas prefixos ds_, stg_ds__ e dim_ sao permitidos nesta DAG."
+        )
 
 
 def parse_string_list(raw_value: Any) -> list[str]:

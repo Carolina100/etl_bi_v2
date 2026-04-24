@@ -10,12 +10,13 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.task.trigger_rule import TriggerRule
 
 from src.utils.airflow_helpers import (
+    AUDIT_STATUS_FAILED,
+    AUDIT_STATUS_STARTED,
+    AUDIT_STATUS_SUCCESS,
     airflow_failure_alert_callback,
     airflow_retry_alert_callback,
     audit_load_audit,
-    mark_pipeline_watermark_failure,
     run_airbyte_connection_sync,
-    run_extract_watermark_event,
     send_operational_alert,
 )
 
@@ -41,16 +42,10 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
         step_name="REGISTER_EXTRACT_START",
         source_name="AIRBYTE",
         target_name=target_name,
-        status="STARTED",
+        status=AUDIT_STATUS_STARTED,
         details=f"pipeline={pipeline_name}",
         execution_order=1,
         started_at=started_at,
-    )
-
-    result = run_extract_watermark_event(
-        pipeline_name=pipeline_name,
-        id_clientes=None,
-        event_type="start",
     )
 
     duration_seconds = int(time.time() - step_start_time)
@@ -61,15 +56,15 @@ def register_extract_start(**context: Any) -> dict[str, Any]:
         step_name="REGISTER_EXTRACT_START",
         source_name="AIRBYTE",
         target_name=target_name,
-        status="SUCCESS",
-        details=f"event={result.get('event_type')}",
+        status=AUDIT_STATUS_SUCCESS,
+        details="event=start",
         execution_order=1,
         duration_seconds=duration_seconds,
         started_at=started_at,
         ended_at=ended_at,
     )
 
-    return result
+    return {"status": "SUCCESS", "event_type": "start"}
 
 
 def register_extract_end(**context: Any) -> dict[str, Any]:
@@ -87,16 +82,10 @@ def register_extract_end(**context: Any) -> dict[str, Any]:
         step_name="REGISTER_EXTRACT_END",
         source_name="AIRBYTE",
         target_name=target_name,
-        status="STARTED",
+        status=AUDIT_STATUS_STARTED,
         details=f"pipeline={pipeline_name}",
         execution_order=3,
         started_at=started_at,
-    )
-
-    result = run_extract_watermark_event(
-        pipeline_name=pipeline_name,
-        id_clientes=None,
-        event_type="end",
     )
 
     duration_seconds = int(time.time() - step_start_time)
@@ -107,15 +96,15 @@ def register_extract_end(**context: Any) -> dict[str, Any]:
         step_name="REGISTER_EXTRACT_END",
         source_name="AIRBYTE",
         target_name=target_name,
-        status="SUCCESS",
-        details=f"event={result.get('event_type')}",
+        status=AUDIT_STATUS_SUCCESS,
+        details="event=end",
         execution_order=3,
         duration_seconds=duration_seconds,
         started_at=started_at,
         ended_at=ended_at,
     )
 
-    return result
+    return {"status": "SUCCESS", "event_type": "end"}
 
 
 def run_airbyte_sync(**context: Any) -> dict[str, Any]:
@@ -157,7 +146,7 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
         step_name="AIRBYTE_SYNC",
         source_name="AIRBYTE",
         target_name=target_name,
-        status="STARTED",
+        status=AUDIT_STATUS_STARTED,
         details=f"pipeline={pipeline_name}",
         execution_order=2,
         started_at=started_at,
@@ -170,9 +159,27 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
             poll_interval_seconds=poll_interval_seconds,
         )
         rows_processed = result.get("rows_processed")
+        if rows_processed is None:
+            # Fallback defensivo quando o payload do Airbyte nao traz o campo consolidado.
+            for candidate in (
+                result.get("rows_synced"),
+                result.get("rows_committed"),
+                result.get("rows_emitted"),
+                result.get("rows_extracted"),
+                result.get("rows_stream_stats_total"),
+            ):
+                if candidate is not None:
+                    rows_processed = candidate
+                    break
+        stream_stats_summary = result.get("stream_stats_summary")
+        rows_metric_source = result.get("rows_metric_source")
         details = f"job_id={result.get('job_id')} status={result.get('job_status')}"
         if rows_processed is not None:
             details += f" rows_processed={rows_processed}"
+        if rows_metric_source:
+            details += f" metric_source={rows_metric_source}"
+        if stream_stats_summary:
+            details += f" stream_stats={stream_stats_summary}"
 
         duration_seconds = int(time.time() - step_start_time)
         ended_at = datetime.utcnow()
@@ -182,7 +189,7 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
             step_name="AIRBYTE_SYNC",
             source_name="AIRBYTE",
             target_name=target_name,
-            status="SUCCESS",
+            status=AUDIT_STATUS_SUCCESS,
             rows_processed=rows_processed,
             details=details,
             execution_order=2,
@@ -199,17 +206,12 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
             step_name="AIRBYTE_SYNC",
             source_name="AIRBYTE",
             target_name=target_name,
-            status="FAILED",
+            status=AUDIT_STATUS_FAILED,
             details=str(exc),
             execution_order=2,
             duration_seconds=duration_seconds,
             started_at=started_at,
             ended_at=ended_at,
-        )
-        mark_pipeline_watermark_failure(
-            pipeline_name=pipeline_name,
-            batch_id=audit_batch_id,
-            error_message=str(exc),
         )
         raise
 
@@ -238,8 +240,6 @@ def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
         failed_tasks.append(task_id)
 
     if failed_tasks:
-        dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
-        pipeline_name = dag_conf.get("watermark_pipeline_name")
         execution_order_by_task = {
             "register_extract_start": 1,
             "sync_ds_airbyte": 2,
@@ -257,7 +257,7 @@ def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
                 step_name=step_name_by_task[task_id],
                 source_name="AIRBYTE",
                 target_name=target_name,
-                status="FAILED",
+                status=AUDIT_STATUS_FAILED,
                 details="task sem sucesso explicito na DAG final de extracao",
                 execution_order=execution_order_by_task[task_id],
                 started_at=datetime.utcnow(),
@@ -273,11 +273,6 @@ def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:
                 "observacao=dag finalizou com falha ou estado inconsistente na etapa de extracao",
             ]
         )
-        mark_pipeline_watermark_failure(
-            pipeline_name=pipeline_name,
-            batch_id=audit_batch_id,
-            error_message=f"Falha na DAG de extracao Airbyte. tasks: {', '.join(failed_tasks)}",
-        )
         send_operational_alert(title=title, message=message, severity="ERROR")
         raise AirflowFailException(
             f"Falha na DAG de extracao Airbyte. tasks problemáticas: {', '.join(failed_tasks)}"
@@ -291,7 +286,7 @@ with DAG(
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,
-    max_active_runs=4,
+    max_active_runs=1,
     tags=["airbyte", "ds", "dimensions"],
     default_args={
         "email_on_failure": False,

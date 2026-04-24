@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: stg_ds__sx_operacao_d
+    description: "Staging da tabela DS de operações."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+              - CD_OPERACAO
+    columns:
+      - name: ID_CLIENTE
+        tests:
+          - not_null
+      - name: CD_OPERACAO
+        tests:
+          - not_null
+      - name: DESC_OPERACAO
+      - name: CD_GRUPO_OPERACAO
+      - name: DESC_GRUPO_OPERACAO
+      - name: CD_GRUPO_PARADA
+      - name: FG_TIPO_OPERACAO
+      - name: CD_PROCESSO
+      - name: DESC_PROCESSO
+      - name: FG_ATIVO
+        tests:
+          - not_null
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
+        tests:
+          - not_null
+      - name: SOURCE_UPDATED_AT
+        tests:
+          - not_null
+      - name: AIRBYTE_EXTRACTED_AT
+        tests:
+          - not_null

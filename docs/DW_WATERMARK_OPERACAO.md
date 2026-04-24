@@ -10,8 +10,6 @@ O pipeline operacional ativo neste repositorio e:
 
 O uso atual da tabela e:
 
-- registrar `LAST_EXTRACT_STARTED_AT`
-- registrar `LAST_EXTRACT_ENDED_AT`
 - registrar o ultimo `LAST_BI_UPDATED_AT` consolidado no `DW`
 - registrar o ultimo batch executado com sucesso
 - registrar o status macro da ultima execucao
@@ -31,12 +29,7 @@ Coluna principal de incremental no `DS -> DW`:
 
 - `LAST_BI_UPDATED_AT`
 
-Metadados de extracao:
-
-- `LAST_EXTRACT_STARTED_AT`
-- `LAST_EXTRACT_ENDED_AT`
-
-Metadados da carga `DS -> DW`:
+Metadados operacionais da carga `DS -> DW`:
 
 - `LAST_SUCCESS_BATCH_ID`
 - `LAST_LOAD_MODE`
@@ -50,10 +43,7 @@ Metadados da carga `DS -> DW`:
 ## Responsabilidade por atualizacao
 
 - Airflow / orquestracao:
-  - `LAST_EXTRACT_STARTED_AT`
-  - `LAST_EXTRACT_ENDED_AT`
-  - `LAST_RUN_STATUS = 'RUNNING'` no inicio da extracao
-  - `LAST_RUN_STATUS = 'FAILED'` quando Airbyte, dbt ou orquestracao falham
+  - `LAST_RUN_STATUS = 'FAILED'` quando o dbt ou a orquestracao da dimensao falham
   - `LAST_ERROR_MESSAGE` com resumo da falha operacional
 
 - dbt:
@@ -92,28 +82,36 @@ Ao final da execucao com sucesso, o modelo atualiza:
 
 ## Regra de extracao upstream
 
-O Airflow registra:
+No desenho atual, a extracao do Airbyte nao atualiza mais a `CTL_PIPELINE_WATERMARK`.
 
-1. `LAST_EXTRACT_STARTED_AT`
-2. executa a sync do Airbyte
-3. `LAST_EXTRACT_ENDED_AT`
+A extracao e registrada em:
 
-No inicio da extracao, a tabela passa a refletir:
+- `CTL_BATCH_EXECUTION` como trilha macro da orquestracao
+- `CTL_LOAD_AUDIT` como steps detalhados (`REGISTER_EXTRACT_START`, `AIRBYTE_SYNC`, `REGISTER_EXTRACT_END`)
 
-- `LAST_RUN_STATUS = 'RUNNING'`
-- `LAST_ERROR_MESSAGE = null`
-
-Se a esteira falhar, Airflow atualiza:
+Se a etapa dbt da dimensao falhar, o Airflow atualiza:
 
 - `LAST_RUN_STATUS = 'FAILED'`
 - `LAST_ERROR_MESSAGE` com a falha capturada
 - `LAST_RUN_BATCH_ID` com o batch da execucao
 - `UPDATED_AT` com o horario da atualizacao
 
-Esse metadado:
+Se a dimensao concluir com sucesso, o proprio modelo dbt atualiza:
+
+- `LAST_BI_UPDATED_AT`
+- `LAST_SUCCESS_BATCH_ID`
+- `LAST_LOAD_MODE`
+- `LAST_RUN_BATCH_ID`
+- `LAST_RUN_STATUS = 'SUCCESS'`
+- `LAST_ERROR_MESSAGE = null`
+- `LAST_RUN_STARTED_AT`
+- `LAST_RUN_COMMITTED_AT`
+- `UPDATED_AT`
+
+Esse metadado da watermark:
 
 - nao substitui o cursor do Airbyte
-- serve para rastreabilidade operacional
+- serve para incremental e rastreabilidade operacional por dimensao
 
 ## Persistencia
 
@@ -125,9 +123,9 @@ A `CTL_PIPELINE_WATERMARK` deve ser tratada como tabela de controle persistente.
 ## Fluxo operacional atual
 
 1. `load_ds_airbyte_dimensions_dag`
-   - grava `LAST_EXTRACT_STARTED_AT`
+   - registra inicio da extracao no `CTL_LOAD_AUDIT`
    - executa Airbyte
-   - grava `LAST_EXTRACT_ENDED_AT`
+   - registra fim da extracao no `CTL_LOAD_AUDIT`
 2. `load_dw_dbt_dimensions_dag`
    - roda `dbt build` para `ds_sx_equipamento_d`, `stg_ds__sx_equipamento_d` e `dim_sx_equipamento_d`
 3. `orchestrate_ds_dw_dimensions_dag`

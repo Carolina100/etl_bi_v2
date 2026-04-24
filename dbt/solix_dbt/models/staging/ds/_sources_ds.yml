@@ -5,6 +5,10 @@ sources:
     description: "Camada DS curada no Snowflake, consumida pelo dbt para construir o DW."
     database: SOLIX_BI
     schema: DS
+    loaded_at_field: AIRBYTE_EXTRACTED_AT
+    freshness:
+      warn_after: {count: 18, period: hour}
+      error_after: {count: 30, period: hour}
     tables:
       - name: sx_cliente_d
         identifier: SX_CLIENTE_D
@@ -15,3 +19,6 @@ sources:
       - name: sx_equipamento_d
         identifier: SX_EQUIPAMENTO_D
         description: "Tabela DS da entidade SX_EQUIPAMENTO_D."
+      - name: sx_operacao_d
+        identifier: SX_OPERACAO_D
+        description: "Tabela DS da entidade SX_OPERACAO_D."      

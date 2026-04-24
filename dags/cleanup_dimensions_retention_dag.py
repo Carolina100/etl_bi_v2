@@ -9,6 +9,11 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.task.trigger_rule import TriggerRule
 
 from src.utils.airflow_helpers import (
+    AUDIT_STATUS_FAILED,
+    AUDIT_STATUS_STARTED,
+    AUDIT_STATUS_SUCCESS,
+    PIPELINE_STATUS_FAILED,
+    PIPELINE_STATUS_SUCCESS,
     airflow_failure_alert_callback,
     airflow_retry_alert_callback,
     audit_batch_execution_end,
@@ -40,12 +45,42 @@ from src.utils.airflow_helpers import (
 # ============================================================================
 RETENTION_SPECS = [
     {
+        "task_id": "cleanup_ds_sx_cliente",
+        "step_name": "CLEANUP_DS_SX_CLIENTE",
+        "target_name": "SOLIX_BI.DS.SX_CLIENTE_D",
+        "description": "retencao DS: manter apenas o dia atual por BI_UPDATED_AT",
+        "sql": """
+delete from SOLIX_BI.DS.SX_CLIENTE_D
+where cast(BI_UPDATED_AT as date) < current_date()
+""".strip(),
+    },
+    {
+        "task_id": "cleanup_ds_sx_estado",
+        "step_name": "CLEANUP_DS_SX_ESTADO",
+        "target_name": "SOLIX_BI.DS.SX_ESTADO_D",
+        "description": "retencao DS: manter apenas o dia atual por BI_UPDATED_AT",
+        "sql": """
+delete from SOLIX_BI.DS.SX_ESTADO_D
+where cast(BI_UPDATED_AT as date) < current_date()
+""".strip(),
+    },
+    {
         "task_id": "cleanup_ds_sx_equipamento",
         "step_name": "CLEANUP_DS_SX_EQUIPAMENTO",
         "target_name": "SOLIX_BI.DS.SX_EQUIPAMENTO_D",
         "description": "retencao DS: manter apenas o dia atual por BI_UPDATED_AT",
         "sql": """
 delete from SOLIX_BI.DS.SX_EQUIPAMENTO_D
+where cast(BI_UPDATED_AT as date) < current_date()
+""".strip(),
+    },
+    {
+        "task_id": "cleanup_ds_sx_operacao",
+        "step_name": "CLEANUP_DS_SX_OPERACAO",
+        "target_name": "SOLIX_BI.DS.SX_OPERACAO_D",
+        "description": "retencao DS: manter apenas o dia atual por BI_UPDATED_AT",
+        "sql": """
+delete from SOLIX_BI.DS.SX_OPERACAO_D
 where cast(BI_UPDATED_AT as date) < current_date()
 """.strip(),
     },
@@ -63,7 +98,7 @@ def run_retention_cleanup(*, spec: dict[str, str], **context: Any) -> dict[str, 
         step_name=spec["step_name"],
         source_name="RETENTION",
         target_name=spec["target_name"],
-        status="STARTED",
+        status=AUDIT_STATUS_STARTED,
         details=spec["description"],
         execution_order=spec.get("execution_order"),
         started_at=started_at,
@@ -80,7 +115,7 @@ def run_retention_cleanup(*, spec: dict[str, str], **context: Any) -> dict[str, 
             step_name=spec["step_name"],
             source_name="RETENTION",
             target_name=spec["target_name"],
-            status="SUCCESS",
+            status=AUDIT_STATUS_SUCCESS,
             details="cleanup concluido",
             rows_processed=rows_affected,
             execution_order=spec.get("execution_order"),
@@ -102,7 +137,7 @@ def run_retention_cleanup(*, spec: dict[str, str], **context: Any) -> dict[str, 
             step_name=spec["step_name"],
             source_name="RETENTION",
             target_name=spec["target_name"],
-            status="FAILED",
+            status=AUDIT_STATUS_FAILED,
             details=str(exc),
             execution_order=spec.get("execution_order"),
             duration_seconds=duration_seconds,
@@ -143,7 +178,7 @@ def register_cleanup_batch_end(**context: Any) -> dict[str, Any]:
             continue
         failed_tasks.append(spec["task_id"])
 
-    status = "SUCCESS" if not failed_tasks else "FAILED"
+    status = PIPELINE_STATUS_SUCCESS if not failed_tasks else PIPELINE_STATUS_FAILED
     error_message = None if not failed_tasks else f"tasks failed: {', '.join(failed_tasks)}"
 
     batch_start_time_seconds = dag_run.start_date.timestamp() if dag_run.start_date else time.time()
@@ -156,7 +191,6 @@ def register_cleanup_batch_end(**context: Any) -> dict[str, Any]:
         target_name="DS",
         status=status,
         error_message=error_message,
-        rows_loaded=total_rows_deleted,
         duration_seconds=duration_seconds,
     )
     return {"status": status, "rows_deleted": total_rows_deleted}

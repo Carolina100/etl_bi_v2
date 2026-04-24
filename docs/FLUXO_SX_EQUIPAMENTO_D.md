@@ -169,10 +169,10 @@ Caracteristicas:
 
 ### O que ela faz
 
-1. registra `LAST_EXTRACT_STARTED_AT`
+1. registra auditoria `REGISTER_EXTRACT_START`
 2. dispara a sync do Airbyte Cloud
 3. aguarda a conclusao
-4. registra `LAST_EXTRACT_ENDED_AT`
+4. registra auditoria `REGISTER_EXTRACT_END`
 
 ### Como e a execucao
 
@@ -186,10 +186,11 @@ A DAG atualiza:
 
 - `CTL_PIPELINE_WATERMARK`
 
-Campos de extracao:
+Campos operacionais relevantes:
 
-- `LAST_EXTRACT_STARTED_AT`
-- `LAST_EXTRACT_ENDED_AT`
+- `LAST_RUN_STATUS`
+- `LAST_RUN_STARTED_AT`
+- `LAST_RUN_COMMITTED_AT`
 
 Importante:
 

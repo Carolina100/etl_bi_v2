@@ -12,13 +12,18 @@ from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOpe
 from airflow.task.trigger_rule import TriggerRule
 
 from src.utils.airflow_helpers import (
+    AUDIT_STATUS_FAILED,
+    AUDIT_STATUS_STARTED,
+    AUDIT_STATUS_SUCCESS,
+    PIPELINE_STATUS_FAILED,
+    PIPELINE_STATUS_SUCCESS,
     airflow_failure_alert_callback,
     airflow_retry_alert_callback,
     audit_batch_execution_end,
     audit_batch_execution_start,
     audit_load_audit,
     execute_snowflake_sql,
-    mark_pipeline_watermark_failure,
+    fetch_batch_row_totals,
 )
 
 
@@ -82,7 +87,7 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
         if task_status != "SUCCESS":
             failed_tasks.append(f"{task_id}:{task_status or 'UNKNOWN'}")
 
-    status = "SUCCESS" if not failed_tasks else "FAILED"
+    status = PIPELINE_STATUS_SUCCESS if not failed_tasks else PIPELINE_STATUS_FAILED
     error_message = None
     if failed_tasks:
         error_message = f"tasks failed: {', '.join(failed_tasks)}"
@@ -94,6 +99,7 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
 
     batch_start_time_seconds = dag_run.start_date.timestamp() if dag_run.start_date else time.time()
     duration_seconds = int(time.time() - batch_start_time_seconds)
+    batch_row_totals = fetch_batch_row_totals(dag_run.run_id)
 
     audit_batch_execution_end(
         batch_id=dag_run.run_id,
@@ -102,15 +108,13 @@ def register_batch_end(**context: Any) -> dict[str, Any]:
         target_name=target_name,
         status=status,
         error_message=error_message,
+        rows_extracted=batch_row_totals.get("rows_extracted"),
+        rows_loaded=batch_row_totals.get("rows_loaded"),
+        rows_affected=batch_row_totals.get("rows_affected"),
         duration_seconds=duration_seconds,
     )
 
     if status == "FAILED":
-        mark_pipeline_watermark_failure(
-            pipeline_name=pipeline_name,
-            batch_id=dag_run.run_id,
-            error_message=error_message or "Falha na orquestracao DS->DW.",
-        )
         raise AirflowFailException(error_message or "Falha na orquestracao DS->DW.")
 
     return {"status": status}
@@ -137,8 +141,8 @@ def cleanup_raw_after_success(**context: Any) -> dict[str, Any]:
             step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
             source_name="RETENTION",
             target_name=spec["target_name"],
-            status="STARTED",
-            details=spec.get("description", "cleanup tecnico do RAW apos sucesso do pipeline"),
+                status=AUDIT_STATUS_STARTED,
+                details=spec.get("description", "cleanup tecnico do RAW apos sucesso do pipeline"),
             execution_order=execution_order,
             started_at=started_at,
         )
@@ -154,7 +158,7 @@ def cleanup_raw_after_success(**context: Any) -> dict[str, Any]:
                 step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
                 source_name="RETENTION",
                 target_name=spec["target_name"],
-                status="SUCCESS",
+                status=AUDIT_STATUS_SUCCESS,
                 details="cleanup tecnico do RAW concluido",
                 rows_processed=rows_affected,
                 execution_order=execution_order,
@@ -168,7 +172,7 @@ def cleanup_raw_after_success(**context: Any) -> dict[str, Any]:
                 step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
                 source_name="RETENTION",
                 target_name=spec["target_name"],
-                status="FAILED",
+                status=AUDIT_STATUS_FAILED,
                 details=str(exc),
                 execution_order=execution_order,
                 duration_seconds=int(time.time() - step_start_time),

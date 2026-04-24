@@ -8,6 +8,7 @@ create or replace transient table SOLIX_BI.DS.CTL_BATCH_EXECUTION (
     ENDED_AT timestamp_ntz,
     ROWS_EXTRACTED number(38, 0),
     ROWS_LOADED number(38, 0),
+    ROWS_AFFECTED number(38, 0),
     ERROR_MESSAGE varchar,
     DURATION_SECONDS number(38, 0),
     ORCHESTRATION_TYPE varchar,

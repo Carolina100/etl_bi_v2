@@ -5,7 +5,7 @@
 ║  ENTIDADE CURADA NA ORIGEM                                                   ║
 ║                                                                              ║
 ║  A origem atual do Airbyte e uma view PostgreSQL ja consolidada:             ║
-║  bi.vw_sx_equipamento_d                                                      ║
+║  bi.vw_sx_operacao_d                                                      ║
 ║                                                                              ║
 ║  O QUE ESTE MODELO FAZ                                                       ║
 ║  - le uma RAW unica gerada pelo Airbyte                                       ║
@@ -16,9 +16,9 @@
 ╚══════════════════════════════════════════════════════════════════════════════╝
 #}
 
-{% set MODEL_ALIAS = 'SX_EQUIPAMENTO_D' %}
-{% set NATURAL_KEY_COLUMNS = ['ID_CLIENTE', 'CD_EQUIPAMENTO'] %}
-{% set RAW_SOURCE_TABLE = 'SOLIX_BI.RAW.VW_SX_EQUIPAMENTO_D' %}
+{% set MODEL_ALIAS = 'SX_OPERACAO_D' %}
+{% set NATURAL_KEY_COLUMNS = ['ID_CLIENTE', 'CD_OPERACAO'] %}
+{% set RAW_SOURCE_TABLE = 'SOLIX_BI.RAW.VW_SX_OPERACAO_D' %}
 {% set BATCH_ID = invocation_id %}
 
 {{ config(
@@ -34,14 +34,14 @@
 with raw_source as (
     select
         cast(ID_CLIENTE as number(38, 0)) as ID_CLIENTE,
-        cast(CD_EQUIPAMENTO as varchar(20)) as CD_EQUIPAMENTO,
-        cast(DESC_EQUIPAMENTO as varchar) as DESC_EQUIPAMENTO,
-        cast(CD_MODELO_EQUIPAMENTO as number(38, 0)) as CD_MODELO_EQUIPAMENTO,
-        cast(DESC_MODELO_EQUIPAMENTO as varchar) as DESC_MODELO_EQUIPAMENTO,
-        cast(CD_TIPO_EQUIPAMENTO as number(38, 0)) as CD_TIPO_EQUIPAMENTO,
-        cast(DESC_TIPO_EQUIPAMENTO as varchar) as DESC_TIPO_EQUIPAMENTO,
-        cast(DESC_STATUS as varchar) as DESC_STATUS,
-        cast(TP_USO_EQUIPAMENTO as number(38, 0)) as TP_USO_EQUIPAMENTO,
+        cast(CD_OPERACAO as number(38, 0)) as CD_OPERACAO,
+        cast(DESC_OPERACAO as varchar) as DESC_OPERACAO,
+        cast(CD_GRUPO_OPERACAO as number(38, 0)) as CD_GRUPO_OPERACAO,
+        cast(DESC_GRUPO_OPERACAO as varchar) as DESC_GRUPO_OPERACAO,
+        cast(CD_GRUPO_PARADA as number(38, 0)) as CD_GRUPO_PARADA,
+        cast(FG_TIPO_OPERACAO as varchar) as FG_TIPO_OPERACAO,
+        cast(CD_PROCESSO as number(38, 0)) as CD_PROCESSO,
+        cast(DESC_PROCESSO as varchar) as DESC_PROCESSO,
         cast(FG_ATIVO as boolean) as FG_ATIVO,
         cast(SOURCE_UPDATED_AT as timestamp_ntz) as SOURCE_UPDATED_AT,
         cast(_AIRBYTE_EXTRACTED_AT as timestamp_ntz) as AIRBYTE_EXTRACTED_AT
@@ -52,7 +52,7 @@ latest_source as (
     select *
     from raw_source
     qualify row_number() over (
-        partition by ID_CLIENTE, CD_EQUIPAMENTO
+        partition by ID_CLIENTE, CD_OPERACAO
         order by SOURCE_UPDATED_AT desc nulls last,
                  AIRBYTE_EXTRACTED_AT desc nulls last
     ) = 1
@@ -62,14 +62,14 @@ current_target as (
     {% if is_incremental() %}
     select
         ID_CLIENTE,
-        CD_EQUIPAMENTO,
-        DESC_EQUIPAMENTO,
-        CD_MODELO_EQUIPAMENTO,
-        DESC_MODELO_EQUIPAMENTO,
-        CD_TIPO_EQUIPAMENTO,
-        DESC_TIPO_EQUIPAMENTO,
-        DESC_STATUS,
-        TP_USO_EQUIPAMENTO,
+        CD_OPERACAO,
+        DESC_OPERACAO,
+        CD_GRUPO_OPERACAO,
+        DESC_GRUPO_OPERACAO,
+        CD_GRUPO_PARADA,
+        FG_TIPO_OPERACAO,
+        CD_PROCESSO,
+        DESC_PROCESSO,
         FG_ATIVO,
         ETL_BATCH_ID,
         BI_CREATED_AT,
@@ -80,14 +80,14 @@ current_target as (
     {% else %}
     select
         cast(null as number(38, 0)) as ID_CLIENTE,
-        cast(null as varchar(20)) as CD_EQUIPAMENTO,
-        cast(null as varchar) as DESC_EQUIPAMENTO,
-        cast(null as number(38, 0)) as CD_MODELO_EQUIPAMENTO,
-        cast(null as varchar) as DESC_MODELO_EQUIPAMENTO,
-        cast(null as number(38, 0)) as CD_TIPO_EQUIPAMENTO,
-        cast(null as varchar) as DESC_TIPO_EQUIPAMENTO,
-        cast(null as varchar) as DESC_STATUS,
-        cast(null as number(38, 0)) as TP_USO_EQUIPAMENTO,
+        cast(null as number(38, 0)) as CD_OPERACAO,
+        cast(null as varchar) as DESC_OPERACAO,
+        cast(null as number(38, 0)) as CD_GRUPO_OPERACAO,
+        cast(null as varchar) as DESC_GRUPO_OPERACAO,
+        cast(null as number(38, 0)) as CD_GRUPO_PARADA,
+        cast(null as varchar) as FG_TIPO_OPERACAO,
+        cast(null as number(38, 0)) as CD_PROCESSO,
+        cast(null as varchar) as DESC_PROCESSO,
         cast(null as boolean) as FG_ATIVO,
         cast(null as varchar) as ETL_BATCH_ID,
         cast(null as timestamp_ntz) as BI_CREATED_AT,
@@ -101,14 +101,14 @@ current_target as (
 changed_or_new as (
     select
         s.ID_CLIENTE,
-        s.CD_EQUIPAMENTO,
-        s.DESC_EQUIPAMENTO,
-        s.CD_MODELO_EQUIPAMENTO,
-        s.DESC_MODELO_EQUIPAMENTO,
-        s.CD_TIPO_EQUIPAMENTO,
-        s.DESC_TIPO_EQUIPAMENTO,
-        s.DESC_STATUS,
-        s.TP_USO_EQUIPAMENTO,
+        s.CD_OPERACAO,
+        s.DESC_OPERACAO,
+        s.CD_GRUPO_OPERACAO,
+        s.DESC_GRUPO_OPERACAO,
+        s.CD_GRUPO_PARADA,
+        s.FG_TIPO_OPERACAO,
+        s.CD_PROCESSO,
+        s.DESC_PROCESSO,
         s.FG_ATIVO,
         cast('{{ BATCH_ID }}' as varchar) as ETL_BATCH_ID,
         coalesce(
@@ -118,19 +118,19 @@ changed_or_new as (
         case
             when t.ID_CLIENTE is null
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.DESC_EQUIPAMENTO, '') <> coalesce(s.DESC_EQUIPAMENTO, '')
+            when coalesce(t.DESC_OPERACAO, '') <> coalesce(s.DESC_OPERACAO, '')
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.CD_MODELO_EQUIPAMENTO, -999) <> coalesce(s.CD_MODELO_EQUIPAMENTO, -999)
+            when coalesce(t.CD_GRUPO_OPERACAO, -999) <> coalesce(s.CD_GRUPO_OPERACAO, -999)
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.DESC_MODELO_EQUIPAMENTO, '') <> coalesce(s.DESC_MODELO_EQUIPAMENTO, '')
+            when coalesce(t.DESC_GRUPO_OPERACAO, '') <> coalesce(s.DESC_GRUPO_OPERACAO, '')
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.CD_TIPO_EQUIPAMENTO, -999) <> coalesce(s.CD_TIPO_EQUIPAMENTO, -999)
+            when coalesce(t.CD_GRUPO_PARADA, -999) <> coalesce(s.CD_GRUPO_PARADA, -999)
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.DESC_TIPO_EQUIPAMENTO, '') <> coalesce(s.DESC_TIPO_EQUIPAMENTO, '')
+            when coalesce(t.FG_TIPO_OPERACAO, '') <> coalesce(s.FG_TIPO_OPERACAO, '')
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.DESC_STATUS, '') <> coalesce(s.DESC_STATUS, '')
+            when coalesce(t.CD_PROCESSO, -999) <> coalesce(s.CD_PROCESSO, -999)
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
-            when coalesce(t.TP_USO_EQUIPAMENTO, -999) <> coalesce(s.TP_USO_EQUIPAMENTO, -999)
+            when coalesce(t.DESC_PROCESSO, '') <> coalesce(s.DESC_PROCESSO, '')
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
             when coalesce(t.FG_ATIVO, false) <> coalesce(s.FG_ATIVO, false)
                 then convert_timezone('UTC', current_timestamp())::timestamp_ntz
@@ -147,19 +147,19 @@ changed_or_new as (
     from latest_source s
     left join current_target t
         on s.ID_CLIENTE = t.ID_CLIENTE
-       and s.CD_EQUIPAMENTO = t.CD_EQUIPAMENTO
+       and s.CD_OPERACAO = t.CD_OPERACAO
     where
         t.ID_CLIENTE is null
         or (
             t.ID_CLIENTE is not null
             and (
-                coalesce(t.DESC_EQUIPAMENTO, '') <> coalesce(s.DESC_EQUIPAMENTO, '')
-                or coalesce(t.CD_MODELO_EQUIPAMENTO, -999) <> coalesce(s.CD_MODELO_EQUIPAMENTO, -999)
-                or coalesce(t.DESC_MODELO_EQUIPAMENTO, '') <> coalesce(s.DESC_MODELO_EQUIPAMENTO, '')
-                or coalesce(t.CD_TIPO_EQUIPAMENTO, -999) <> coalesce(s.CD_TIPO_EQUIPAMENTO, -999)
-                or coalesce(t.DESC_TIPO_EQUIPAMENTO, '') <> coalesce(s.DESC_TIPO_EQUIPAMENTO, '')
-                or coalesce(t.DESC_STATUS, '') <> coalesce(s.DESC_STATUS, '')
-                or coalesce(t.TP_USO_EQUIPAMENTO, -999) <> coalesce(s.TP_USO_EQUIPAMENTO, -999)
+                coalesce(t.DESC_OPERACAO, '') <> coalesce(s.DESC_OPERACAO, '')
+                or coalesce(t.CD_GRUPO_OPERACAO, -999) <> coalesce(s.CD_GRUPO_OPERACAO, -999)
+                or coalesce(t.DESC_GRUPO_OPERACAO, '') <> coalesce(s.DESC_GRUPO_OPERACAO, '')
+                or coalesce(t.CD_GRUPO_PARADA, -999) <> coalesce(s.CD_GRUPO_PARADA, -999)
+                or coalesce(t.FG_TIPO_OPERACAO, '') <> coalesce(s.FG_TIPO_OPERACAO, '')
+                or coalesce(t.CD_PROCESSO, -999) <> coalesce(s.CD_PROCESSO, -999)
+                or coalesce(t.DESC_PROCESSO, '') <> coalesce(s.DESC_PROCESSO, '')
                 or coalesce(t.FG_ATIVO, false) <> coalesce(s.FG_ATIVO, false)
                 or coalesce(t.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
                    <> coalesce(s.SOURCE_UPDATED_AT, '1900-01-01'::timestamp_ntz)
@@ -171,14 +171,14 @@ changed_or_new as (
 
 select
     ID_CLIENTE,
-    CD_EQUIPAMENTO,
-    DESC_EQUIPAMENTO,
-    CD_MODELO_EQUIPAMENTO,
-    DESC_MODELO_EQUIPAMENTO,
-    CD_TIPO_EQUIPAMENTO,
-    DESC_TIPO_EQUIPAMENTO,
-    DESC_STATUS,
-    TP_USO_EQUIPAMENTO,
+    CD_OPERACAO,
+    DESC_OPERACAO,
+    CD_GRUPO_OPERACAO,
+    DESC_GRUPO_OPERACAO,
+    CD_GRUPO_PARADA,
+    FG_TIPO_OPERACAO,
+    CD_PROCESSO,
+    DESC_PROCESSO,
     FG_ATIVO,
     ETL_BATCH_ID,
     BI_CREATED_AT,

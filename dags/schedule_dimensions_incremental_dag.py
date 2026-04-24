@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from airflow import DAG
 
 """
@@ -53,7 +55,9 @@ dag: DAG = create_domain_scheduler_dag(
     orchestrator_dag_id=DIMENSIONS_DAG_IDS["orchestrator"],
     tags=["dimensions"],
     conf=build_dimensions_domain_conf(
-        airbyte_connection_id="00d0c26c-649e-4def-b3e8-c9de93527069",
+        # Em producao, injete este valor via env/secret manager por ambiente.
+        # Se vazio, a DAG de extracao falha explicitamente exigindo configuracao.
+        airbyte_connection_id=os.getenv("AIRBYTE_DIMENSIONS_CONNECTION_ID", ""),
         models=[
             # Dimensoes ja implementadas no dominio atual.
             "ds_sx_cliente_d",
@@ -65,6 +69,9 @@ dag: DAG = create_domain_scheduler_dag(
             "ds_sx_equipamento_d",
             "stg_ds__sx_equipamento_d",
             "dim_sx_equipamento_d",
+            "ds_sx_operacao_d",
+            "stg_ds__sx_operacao_d",
+            "dim_sx_operacao_d",
             # Quando novas dimensoes entrarem na mesma connection do Airbyte,
             # adicionar os modelos aqui.
         ],
@@ -73,6 +80,7 @@ dag: DAG = create_domain_scheduler_dag(
             "SOLIX_BI.RAW.VW_SX_CLIENTE_D",
             "SOLIX_BI.RAW.VW_SX_ESTADO_D",
             "SOLIX_BI.RAW.VW_SX_EQUIPAMENTO_D",
+            "SOLIX_BI.RAW.VW_SX_OPERACAO_D",
             # Quando outras views de dimensao entrarem na mesma connection,
             # adicionar aqui tambem.
         ],

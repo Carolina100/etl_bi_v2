@@ -135,6 +135,10 @@ def create_orchestration_scheduler_dag(
             trigger_dag_id=orchestrator_dag_id,
             queue="dbt",
             conf=conf,
+            wait_for_completion=True,
+            allowed_states=["success"],
+            failed_states=["failed"],
+            poke_interval=30,
         )
 
         trigger_pipeline

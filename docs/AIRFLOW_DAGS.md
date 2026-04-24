@@ -23,9 +23,9 @@ O desenho atual e:
 As DAGs principais ficaram separadas por responsabilidade:
 
 - `load_ds_airbyte_dimensions_dag`
-  1. registra `LAST_EXTRACT_STARTED_AT`
+  1. registra auditoria de inicio da extracao (`REGISTER_EXTRACT_START`)
   2. dispara a sync do Airbyte
-  3. registra `LAST_EXTRACT_ENDED_AT`
+  3. registra auditoria de fim da extracao (`REGISTER_EXTRACT_END`)
 
 - `load_dw_dbt_dimensions_dag`
   1. executa `dbt build` no projeto `dbt/solix_dbt`
@@ -237,9 +237,9 @@ Isso evita concorrencia desnecessaria do mesmo pipeline ao mesmo tempo.
 O fluxo recomendado passa a ser:
 
 1. `load_ds_airbyte_dimensions_dag`
-   - grava `LAST_EXTRACT_STARTED_AT`
+   - grava auditoria `REGISTER_EXTRACT_START` e status `RUNNING`
    - dispara e aguarda a sync do Airbyte
-   - grava `LAST_EXTRACT_ENDED_AT`
+   - grava auditoria `REGISTER_EXTRACT_END`
 2. `load_dw_dbt_dimensions_dag`
    - executa dbt incremental para `DS -> DW`
 3. `orchestrate_ds_dw_dimensions_dag`

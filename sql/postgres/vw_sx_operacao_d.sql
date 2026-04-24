@@ -156,13 +156,13 @@ select
     Atributos principais do operacao.
     */
 
-    upper(o.desc_operac)::varchar(1000) as desc_operac,
+    o.desc_operac::varchar(1000) as desc_operacao,
 
     coalesce(o.cd_grupo_operac, -1)::numeric(38, 0) as cd_grupo_operacao,
-    coalesce(upper(m.desc_grupo_operac), 'UNDEFINED')::varchar(1000) as desc_grupo_operac,
-    coalesce(o.cd_grupo_parada, -1)::numeric(38, 0) as desc_grupo_parada,
+    coalesce(m.desc_grupo_operac, 'UNDEFINED')::varchar(1000) as desc_grupo_operacao,
+    coalesce(o.cd_grupo_parada, -1)::numeric(38, 0) as cd_grupo_parada,
     coalesce(o.cd_processo, -1)::numeric(38, 0) as cd_processo,
-    coalesce(upper(t.desc_processo), 'UNDEFINED')::varchar(1000) as desc_processo,
+    coalesce(t.desc_processo, 'UNDEFINED')::varchar(1000) as desc_processo,
     o.fg_tipo_operac::varchar(1000) as fg_tipo_operacao,
 
     /*
