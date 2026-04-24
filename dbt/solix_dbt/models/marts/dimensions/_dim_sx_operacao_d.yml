@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: dim_sx_operacao_d
+    description: "Dimensao DW de operacoes alimentada a partir do DS."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+              - CD_OPERACAO
+    columns:
+      - name: SK_OPERACAO
+        description: "Surrogate key da dimensao."
+        tests:
+          - not_null
+          - unique
+      - name: ID_CLIENTE
+        tests:
+          - not_null
+      - name: CD_OPERACAO
+        tests:
+          - not_null
+      - name: DESC_OPERACAO
+      - name: CD_GRUPO_OPERACAO
+      - name: DESC_GRUPO_OPERACAO
+      - name: CD_GRUPO_PARADA
+      - name: FG_TIPO_OPERACAO
+      - name: CD_PROCESSO
+      - name: DESC_PROCESSO
+      - name: FG_ATIVO
+        tests:
+          - not_null
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
+        tests:
+          - not_null
