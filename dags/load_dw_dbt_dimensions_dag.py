@@ -346,14 +346,21 @@ def build_dbt_success_details(
 ) -> str:
     rows_affected_total = int(run_results.get("rows_affected_total") or 0)
     rows_affected_final_total = int(run_results.get("rows_affected_final_total") or 0)
+    rows_inserted_total = int(run_results.get("rows_inserted_total") or 0)
+    rows_updated_total = int(run_results.get("rows_updated_total") or 0)
+    rows_deleted_total = int(run_results.get("rows_deleted_total") or 0)
+    rows_inserted_final_total = int(run_results.get("rows_inserted_final_total") or 0)
+    rows_updated_final_total = int(run_results.get("rows_updated_final_total") or 0)
+    rows_deleted_final_total = int(run_results.get("rows_deleted_final_total") or 0)
     model_results = run_results.get("model_results") if isinstance(run_results, dict) else None
     if not isinstance(model_results, list):
         return (
             f"{base_details} rows_affected_total={rows_affected_total} "
-            f"rows_affected={rows_affected_final_total}"
+            f"rows_affected_final={rows_affected_final_total}"
         )
 
-    model_rows_summary: list[str] = []
+    changed_model_rows_summary: list[str] = []
+    final_model_rows_summary: list[str] = []
     requested_model_names = {str(model).strip() for model in requested_models if str(model).strip()}
 
     for model_result in model_results:
@@ -364,35 +371,49 @@ def build_dbt_success_details(
         model_name = unique_id.split(".")[-1] if unique_id else ""
         if requested_model_names and model_name not in requested_model_names:
             continue
-        if not model_name.startswith(("dim_", "fct_")):
-            continue
 
         rows_affected = int(model_result.get("rows_affected") or 0)
         rows_inserted = int(model_result.get("rows_inserted") or 0)
         rows_updated = int(model_result.get("rows_updated") or 0)
         rows_deleted = int(model_result.get("rows_deleted") or 0)
+        status = model_result.get("status")
 
-        metrics = [f"affected={rows_affected}"]
-        if rows_inserted:
-            metrics.append(f"inserted={rows_inserted}")
-        if rows_updated:
-            metrics.append(f"updated={rows_updated}")
-        if rows_deleted:
-            metrics.append(f"deleted={rows_deleted}")
+        metrics = [
+            f"status={status}",
+            f"affected={rows_affected}",
+            f"inserted={rows_inserted}",
+            f"updated={rows_updated}",
+            f"deleted={rows_deleted}",
+        ]
 
-        model_rows_summary.append(f"{model_name}({';'.join(metrics)})")
+        model_summary = f"{model_name}({';'.join(metrics)})"
+        if any([rows_affected, rows_inserted, rows_updated, rows_deleted]):
+            changed_model_rows_summary.append(model_summary)
+        if model_name.startswith(("dim_", "fct_")):
+            final_model_rows_summary.append(model_summary)
 
-    if not model_rows_summary:
-        return (
-            f"{base_details} rows_affected_total={rows_affected_total} "
-            f"rows_affected={rows_affected_final_total}"
-        )
-
-    return (
+    totals_summary = (
         f"{base_details} rows_affected_total={rows_affected_total} "
-        f"rows_affected={rows_affected_final_total} "
-        f"models={','.join(model_rows_summary)}"
+        f"rows_inserted_total={rows_inserted_total} "
+        f"rows_updated_total={rows_updated_total} "
+        f"rows_deleted_total={rows_deleted_total} "
+        f"rows_affected_final={rows_affected_final_total} "
+        f"rows_inserted_final={rows_inserted_final_total} "
+        f"rows_updated_final={rows_updated_final_total} "
+        f"rows_deleted_final={rows_deleted_final_total}"
     )
+
+    detail_parts = [totals_summary]
+    if changed_model_rows_summary:
+        detail_parts.append(f"models_changed={','.join(changed_model_rows_summary)}")
+    else:
+        detail_parts.append("models_changed=none")
+
+    if not final_model_rows_summary:
+        return " ".join(detail_parts)
+
+    detail_parts.append(f"models_final={','.join(final_model_rows_summary)}")
+    return " ".join(detail_parts)
 
 
 def validate_supported_dbt_models(models: list[str]) -> None:

@@ -171,15 +171,10 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
                 if candidate is not None:
                     rows_processed = candidate
                     break
-        stream_stats_summary = result.get("stream_stats_summary")
-        rows_metric_source = result.get("rows_metric_source")
-        details = f"job_id={result.get('job_id')} status={result.get('job_status')}"
-        if rows_processed is not None:
-            details += f" rows_processed={rows_processed}"
-        if rows_metric_source:
-            details += f" metric_source={rows_metric_source}"
-        if stream_stats_summary:
-            details += f" stream_stats={stream_stats_summary}"
+        details = build_airbyte_sync_details(
+            result=result,
+            rows_processed=rows_processed,
+        )
 
         duration_seconds = int(time.time() - step_start_time)
         ended_at = datetime.utcnow()
@@ -214,6 +209,38 @@ def run_airbyte_sync(**context: Any) -> dict[str, Any]:
             ended_at=ended_at,
         )
         raise
+
+
+def build_airbyte_sync_details(
+    *,
+    result: dict[str, Any],
+    rows_processed: Any,
+) -> str:
+    detail_parts = [
+        f"connection_id={result.get('connection_id')}",
+        f"job_id={result.get('job_id')}",
+        f"status={result.get('job_status')}",
+    ]
+
+    metric_values = {
+        "rows_processed": rows_processed,
+        "metric_source": result.get("rows_metric_source"),
+        "rows_stream_stats_total": result.get("rows_stream_stats_total"),
+    }
+
+    for metric_name, metric_value in metric_values.items():
+        if metric_value is not None:
+            detail_parts.append(f"{metric_name}={metric_value}")
+
+    stream_stats_summary = result.get("stream_stats_summary")
+    if stream_stats_summary:
+        detail_parts.append(f"stream_stats={stream_stats_summary}")
+
+    configured_streams = result.get("configured_streams")
+    if configured_streams:
+        detail_parts.append(f"configured_streams={configured_streams}")
+
+    return " ".join(detail_parts)
 
 
 def assert_airbyte_run_success(**context: Any) -> dict[str, Any]:

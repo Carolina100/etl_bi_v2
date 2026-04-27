@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: stg_ds__sx_fazenda_d
+    description: "Staging da tabela DS de fazendas."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+              - CD_FAZENDA
+              - CD_TALHAO
+              - CD_ZONA
+    columns:
+      - name: ID_CLIENTE
+        tests:
+          - not_null
+      - name: CD_FAZENDA
+        tests:
+          - not_null
+      - name: DESC_FAZENDA
+      - name: CD_TALHAO
+        tests:
+          - not_null
+      - name: DESC_TALHAO
+      - name: CD_ZONA 
+        tests:
+          - not_null
+      - name: AREA_METRO
+      - name: CD_PRODUTOR
+      - name: DESC_PRODUTOR
+      - name: FG_ATIVO
+        tests:
+          - not_null  
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
+        tests:
+          - not_null
+      - name: SOURCE_UPDATED_AT
+        tests:
+          - not_null
+      - name: AIRBYTE_EXTRACTED_AT
+        tests:
+          - not_null        

@@ -22,3 +22,6 @@ sources:
       - name: sx_operacao_d
         identifier: SX_OPERACAO_D
         description: "Tabela DS da entidade SX_OPERACAO_D."      
+      - name: sx_fazenda_d
+        identifier: SX_FAZENDA_D
+        description: "Tabela DS da entidade SX_FAZENDA_D."  

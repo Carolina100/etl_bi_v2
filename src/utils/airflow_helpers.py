@@ -264,6 +264,11 @@ def run_airbyte_cloud_sync(
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
     )
+    configured_streams_summary = safe_get_airbyte_cloud_connection_streams_summary(
+        api_base_url=api_base_url,
+        access_token=access_token,
+        connection_id=connection_id,
+    )
 
     final_status = job_result.get("status")
     if final_status not in {"succeeded", "completed"}:
@@ -285,6 +290,10 @@ def run_airbyte_cloud_sync(
         "rows_metric_source": job_result.get("rows_metric_source"),
         "rows_emitted": job_result.get("rows_emitted"),
         "stream_stats_summary": job_result.get("stream_stats_summary"),
+        "stream_stats_available": job_result.get("stream_stats_available"),
+        "text_metric_name": job_result.get("text_metric_name"),
+        "candidate_payloads_checked": job_result.get("candidate_payloads_checked"),
+        "configured_streams": configured_streams_summary,
     }
 
 
@@ -788,6 +797,10 @@ def run_airbyte_self_hosted_sync(
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
     )
+    configured_streams_summary = safe_get_airbyte_self_hosted_connection_streams_summary(
+        api_base_url=api_base_url,
+        connection_id=connection_id,
+    )
 
     final_status = job_result.get("status")
     if final_status not in {"succeeded", "completed"}:
@@ -809,6 +822,10 @@ def run_airbyte_self_hosted_sync(
         "rows_metric_source": job_result.get("rows_metric_source"),
         "rows_emitted": job_result.get("rows_emitted"),
         "stream_stats_summary": job_result.get("stream_stats_summary"),
+        "stream_stats_available": job_result.get("stream_stats_available"),
+        "text_metric_name": job_result.get("text_metric_name"),
+        "candidate_payloads_checked": job_result.get("candidate_payloads_checked"),
+        "configured_streams": configured_streams_summary,
     }
 
 
@@ -923,6 +940,7 @@ def get_airbyte_self_hosted_job_payload(
         job_id=job_id,
     )
 
+    successful_payloads: list[dict[str, Any]] = []
     last_error: Exception | None = None
     for method, url, payload in candidate_urls:
         try:
@@ -940,7 +958,9 @@ def get_airbyte_self_hosted_job_payload(
                     timeout=30,
                 )
             response.raise_for_status()
-            return response.json()
+            response_payload = response.json()
+            if isinstance(response_payload, dict):
+                successful_payloads.append(response_payload)
         except requests.HTTPError as exc:
             last_error = exc
             status_code = exc.response.status_code if exc.response is not None else None
@@ -950,6 +970,12 @@ def get_airbyte_self_hosted_job_payload(
         except Exception as exc:
             last_error = exc
             continue
+
+    if successful_payloads:
+        combined_payload = dict(successful_payloads[0])
+        if len(successful_payloads) > 1:
+            combined_payload["_airbyte_candidate_payloads"] = successful_payloads
+        return combined_payload
 
     if last_error is not None:
         raise last_error
@@ -975,6 +1001,125 @@ def build_airbyte_self_hosted_job_urls(
     candidate_urls.append(("GET", f"{v1_base_url}/jobs/{job_id}", None))
     candidate_urls.append(("POST", f"{normalized_base_url}/jobs/get", {"id": job_id}))
     return candidate_urls
+
+
+def get_airbyte_self_hosted_connection_streams_summary(
+    *,
+    api_base_url: str,
+    connection_id: str,
+) -> str | None:
+    normalized_base_url = api_base_url.rstrip("/")
+    response = requests.post(
+        f"{normalized_base_url}/connections/get",
+        headers=build_airbyte_self_hosted_headers(),
+        json={"connectionId": connection_id},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return build_airbyte_connection_streams_summary(response.json())
+
+
+def safe_get_airbyte_self_hosted_connection_streams_summary(
+    *,
+    api_base_url: str,
+    connection_id: str,
+) -> str | None:
+    try:
+        return get_airbyte_self_hosted_connection_streams_summary(
+            api_base_url=api_base_url,
+            connection_id=connection_id,
+        )
+    except Exception:
+        LOGGER.warning(
+            "Nao foi possivel consultar streams configurados da connection do Airbyte. "
+            "connection_id=%s",
+            connection_id,
+            exc_info=True,
+        )
+        return None
+
+
+def get_airbyte_cloud_connection_streams_summary(
+    *,
+    api_base_url: str,
+    access_token: str,
+    connection_id: str,
+) -> str | None:
+    response = requests.get(
+        f"{api_base_url}/connections/{connection_id}",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return build_airbyte_connection_streams_summary(response.json())
+
+
+def safe_get_airbyte_cloud_connection_streams_summary(
+    *,
+    api_base_url: str,
+    access_token: str,
+    connection_id: str,
+) -> str | None:
+    try:
+        return get_airbyte_cloud_connection_streams_summary(
+            api_base_url=api_base_url,
+            access_token=access_token,
+            connection_id=connection_id,
+        )
+    except Exception:
+        LOGGER.warning(
+            "Nao foi possivel consultar streams configurados da connection do Airbyte Cloud. "
+            "connection_id=%s",
+            connection_id,
+            exc_info=True,
+        )
+        return None
+
+
+def build_airbyte_connection_streams_summary(payload: Any) -> str | None:
+    stream_names = extract_airbyte_connection_stream_names(payload)
+    if not stream_names:
+        return None
+
+    unique_stream_names = sorted(dict.fromkeys(stream_names))
+    return ",".join(unique_stream_names)
+
+
+def extract_airbyte_connection_stream_names(payload: Any) -> list[str]:
+    stream_names: list[str] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            if "stream" in value and isinstance(value["stream"], dict):
+                stream = value["stream"]
+                if is_airbyte_stream_selected(value):
+                    stream_name = stream.get("name") or stream.get("streamName") or stream.get("stream_name")
+                    if stream_name:
+                        stream_names.append(str(stream_name))
+
+            if "name" in value and any(key in value for key in ("syncMode", "cursorField", "primaryKey")):
+                if is_airbyte_stream_selected(value):
+                    stream_names.append(str(value["name"]))
+
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(payload)
+    return stream_names
+
+
+def is_airbyte_stream_selected(payload: dict[str, Any]) -> bool:
+    if payload.get("selected") is False:
+        return False
+
+    config = payload.get("config")
+    if isinstance(config, dict) and config.get("selected") is False:
+        return False
+
+    return True
 
 
 def get_airbyte_cloud_access_token(
@@ -1110,8 +1255,13 @@ def parse_airbyte_cloud_job_details(payload: dict[str, Any]) -> dict[str, Any]:
             "rows_synced": None,
             "rows_emitted": None,
             "rows_extracted": None,
+            "rows_committed": None,
+            "rows_stream_stats_total": None,
             "rows_metric_source": None,
             "stream_stats_summary": None,
+            "stream_stats_available": False,
+            "text_metric_name": None,
+            "candidate_payloads_checked": 0,
         }
 
     job_payload = payload.get("job") if "job" in payload else payload
@@ -1163,49 +1313,51 @@ def parse_airbyte_cloud_job_details(payload: dict[str, Any]) -> dict[str, Any]:
         )
     )
 
-    stream_stats = extract_airbyte_stream_stats(terminal_attempt) or extract_airbyte_stream_stats(job_payload)
+    stream_stats = (
+        extract_airbyte_stream_stats(terminal_attempt)
+        or extract_airbyte_stream_stats(job_payload)
+        or extract_airbyte_text_stream_stats(payload)
+    )
     stream_stats_summary = build_airbyte_stream_stats_summary(stream_stats)
     stream_stats_records_total = sum_airbyte_stream_stats_records(stream_stats)
+    prefer_stream_stats_total = stream_stats_records_total is not None and not total_stats
     text_stats = extract_airbyte_text_stats(payload)
-    rows_from_text = parse_int(
-        first_non_null(
-            text_stats.get("records_synced"),
-            text_stats.get("records_committed"),
-            text_stats.get("records_emitted"),
-            text_stats.get("records_extracted"),
-            text_stats.get("rows_inserted"),
-        )
-    )
+    text_metric_name = text_stats.get("metric_name")
+    rows_from_text = parse_int(text_stats.get(text_metric_name)) if text_metric_name else None
 
-    rows_processed = (
-        rows_synced
-        if rows_synced is not None
-        else rows_committed
-        if rows_committed is not None
-        else rows_emitted
-        if rows_emitted is not None
-        else rows_extracted
-        if rows_extracted is not None
-        else stream_stats_records_total
-        if stream_stats_records_total is not None
-        else rows_from_text
-    )
+    rows_processed = None
+    rows_metric_source = None
+    if prefer_stream_stats_total:
+        rows_processed = stream_stats_records_total
+        rows_metric_source = "stream_stats_total"
+    elif rows_synced is not None:
+        rows_processed = rows_synced
+        rows_metric_source = "records_synced"
+    elif rows_committed is not None:
+        rows_processed = rows_committed
+        rows_metric_source = "records_committed"
+    elif rows_emitted is not None:
+        rows_processed = rows_emitted
+        rows_metric_source = "records_emitted"
+    elif rows_extracted is not None:
+        rows_processed = rows_extracted
+        rows_metric_source = "records_extracted"
+    elif stream_stats_records_total is not None:
+        rows_processed = stream_stats_records_total
+        rows_metric_source = "stream_stats_total"
+    elif rows_from_text is not None:
+        rows_processed = rows_from_text
+        rows_metric_source = text_metric_name
 
-    rows_metric_source = (
-        "records_synced"
-        if rows_synced is not None
-        else "records_committed"
-        if rows_committed is not None
-        else "records_emitted"
-        if rows_emitted is not None
-        else "records_extracted"
-        if rows_extracted is not None
-        else "stream_stats_total"
-        if stream_stats_records_total is not None
-        else text_stats.get("metric_name")
-        if rows_from_text is not None
-        else None
-    )
+    if (
+        rows_from_text is not None
+        and text_metric_name
+        and rows_processed is not None
+        and rows_processed == 0
+        and rows_from_text > 0
+    ):
+        rows_processed = rows_from_text
+        rows_metric_source = text_metric_name
 
     return {
         "rows_processed": rows_processed,
@@ -1216,6 +1368,9 @@ def parse_airbyte_cloud_job_details(payload: dict[str, Any]) -> dict[str, Any]:
         "rows_stream_stats_total": stream_stats_records_total,
         "rows_metric_source": rows_metric_source,
         "stream_stats_summary": stream_stats_summary,
+        "stream_stats_available": stream_stats_summary is not None,
+        "text_metric_name": text_metric_name,
+        "candidate_payloads_checked": len(payload.get("_airbyte_candidate_payloads") or [payload]),
     }
 
 
@@ -1325,28 +1480,85 @@ def extract_airbyte_total_stats(payload: Any) -> dict[str, Any] | None:
         if isinstance(total_stats, dict):
             return total_stats
 
-    return find_first_dict_by_predicate(
-        payload,
-        lambda item: any(
-            key in item
-            for key in [
-                "recordsLoaded",
-                "records_loaded",
-                "recordsCommitted",
-                "records_committed",
-                "recordsEmitted",
-                "records_emitted",
-                "recordsExtracted",
-                "records_extracted",
-                "recordsSynced",
-                "records_synced",
-            ]
-        ),
-    )
+    return None
 
 
 def extract_airbyte_stream_stats(payload: Any) -> list[dict[str, Any]] | None:
-    return find_first_list_by_keys(payload, "streamStats", "stream_stats")
+    return find_first_stream_stats(payload)
+
+
+def find_first_stream_stats(payload: Any) -> list[dict[str, Any]] | None:
+    stream_stat_keys = {
+        "streamStats",
+        "stream_stats",
+        "streamStatuses",
+        "stream_statuses",
+        "streamStatus",
+        "stream_status",
+    }
+
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in stream_stat_keys:
+                normalized = normalize_airbyte_stream_stats(value)
+                if normalized:
+                    return normalized
+
+        for value in payload.values():
+            found = find_first_stream_stats(value)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = find_first_stream_stats(item)
+            if found is not None:
+                return found
+    return None
+
+
+def normalize_airbyte_stream_stats(value: Any) -> list[dict[str, Any]] | None:
+    if isinstance(value, list):
+        normalized = [item for item in value if isinstance(item, dict)]
+        return normalized or None
+
+    if not isinstance(value, dict):
+        return None
+
+    if any(key in value for key in ("streamName", "stream_name", "streamDescriptor", "stats")):
+        return [value]
+
+    normalized: list[dict[str, Any]] = []
+    for stream_name, stream_value in value.items():
+        if isinstance(stream_value, dict):
+            item = dict(stream_value)
+            item.setdefault("streamName", stream_name)
+            normalized.append(item)
+
+    return normalized or None
+
+
+def get_airbyte_stream_name(item: dict[str, Any]) -> Any:
+    stream_descriptor = item.get("streamDescriptor") or item.get("stream_descriptor")
+    if isinstance(stream_descriptor, dict):
+        return (
+            stream_descriptor.get("name")
+            or stream_descriptor.get("streamName")
+            or stream_descriptor.get("stream_name")
+        )
+
+    return item.get("streamName") or item.get("stream_name") or item.get("name")
+
+
+def get_airbyte_stream_metric(item: dict[str, Any], *metric_names: str) -> Any:
+    stats = item.get("stats") if isinstance(item.get("stats"), dict) else {}
+    for metric_name in metric_names:
+        value = stats.get(metric_name)
+        if value is not None:
+            return value
+        value = item.get(metric_name)
+        if value is not None:
+            return value
+    return None
 
 
 def build_airbyte_stream_stats_summary(stream_stats: Any) -> str | None:
@@ -1358,29 +1570,34 @@ def build_airbyte_stream_stats_summary(stream_stats: Any) -> str | None:
         if not isinstance(item, dict):
             continue
 
-        stream_name = item.get("streamName") or item.get("stream_name")
-        stats = item.get("stats") if isinstance(item.get("stats"), dict) else {}
-        records_committed = (
-            stats.get("recordsCommitted")
-            or stats.get("records_committed")
-            or item.get("recordsCommitted")
-            or item.get("records_committed")
+        stream_name = get_airbyte_stream_name(item)
+        records_synced = get_airbyte_stream_metric(
+            item,
+            "recordsSynced",
+            "records_synced",
+            "recordsLoaded",
+            "records_loaded",
         )
-        records_emitted = (
-            stats.get("recordsEmitted")
-            or stats.get("records_emitted")
-            or item.get("recordsEmitted")
-            or item.get("records_emitted")
+        records_committed = get_airbyte_stream_metric(
+            item,
+            "recordsCommitted",
+            "records_committed",
         )
-        records_extracted = (
-            stats.get("recordsExtracted")
-            or stats.get("records_extracted")
-            or item.get("recordsExtracted")
-            or item.get("records_extracted")
+        records_emitted = get_airbyte_stream_metric(
+            item,
+            "recordsEmitted",
+            "records_emitted",
+        )
+        records_extracted = get_airbyte_stream_metric(
+            item,
+            "recordsExtracted",
+            "records_extracted",
         )
 
         records_value = (
-            records_committed
+            records_synced
+            if records_synced is not None
+            else records_committed
             if records_committed is not None
             else records_emitted
             if records_emitted is not None
@@ -1402,8 +1619,9 @@ def sum_airbyte_stream_stats_records(stream_stats: Any) -> int | None:
         if not isinstance(item, dict):
             continue
 
-        stats = item.get("stats") if isinstance(item.get("stats"), dict) else {}
         for key in (
+            "recordsLoaded",
+            "records_loaded",
             "recordsCommitted",
             "records_committed",
             "recordsEmitted",
@@ -1413,9 +1631,7 @@ def sum_airbyte_stream_stats_records(stream_stats: Any) -> int | None:
             "recordsSynced",
             "records_synced",
         ):
-            value = stats.get(key)
-            if value is None:
-                value = item.get(key)
+            value = get_airbyte_stream_metric(item, key)
             if value is None:
                 continue
             try:
@@ -1441,6 +1657,73 @@ def iter_string_values(payload: Any) -> list[str]:
     return values
 
 
+def extract_airbyte_text_stream_stats(payload: Any) -> list[dict[str, Any]] | None:
+    text_values = iter_string_values(payload)
+    for text in [*text_values, "\n".join(text_values)]:
+        for json_payload in iter_json_objects_from_text(text):
+            stream_stats = extract_airbyte_stream_stats(json_payload)
+            if stream_stats:
+                return stream_stats
+
+    regex_stream_stats = extract_airbyte_regex_stream_stats(text_values)
+    return regex_stream_stats
+
+
+def iter_json_objects_from_text(text: str) -> list[dict[str, Any]]:
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    search_position = 0
+
+    while search_position < len(text):
+        object_start = text.find("{", search_position)
+        if object_start < 0:
+            break
+
+        try:
+            parsed, parsed_end = decoder.raw_decode(text[object_start:])
+        except Exception:
+            search_position = object_start + 1
+            continue
+
+        if isinstance(parsed, dict):
+            objects.append(parsed)
+        search_position = object_start + parsed_end
+
+    return objects
+
+
+def extract_airbyte_regex_stream_stats(text_values: list[str]) -> list[dict[str, Any]] | None:
+    stream_totals: dict[str, int] = {}
+    patterns = [
+        r"Read\s+(\d+)\s+records?\s+from\s+([A-Za-z0-9_.-]+)\s+stream",
+        r"Emitted\s+(\d+)\s+records?\s+for\s+stream\s+([A-Za-z0-9_.-]+)",
+        r"Committed\s+(\d+)\s+records?\s+for\s+stream\s+([A-Za-z0-9_.-]+)",
+        r"streamName[\"'\s:=]+([A-Za-z0-9_.-]+).*?records(?:Synced|Committed|Emitted|Extracted|Loaded)[\"'\s:=]+(\d+)",
+        r"([A-Za-z0-9_.-]+)\s+stream.*?records(?:Synced|Committed|Emitted|Extracted|Loaded)[\"'\s:=]+(\d+)",
+    ]
+
+    for text in text_values:
+        for pattern in patterns:
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                first_value, second_value = match.group(1), match.group(2)
+                if first_value.isdigit():
+                    row_count = int(first_value)
+                    stream_name = second_value
+                else:
+                    stream_name = first_value
+                    row_count = int(second_value)
+
+                stream_totals[stream_name] = max(stream_totals.get(stream_name, 0), row_count)
+
+    if not stream_totals:
+        return None
+
+    return [
+        {"streamName": stream_name, "stats": {"recordsSynced": row_count}}
+        for stream_name, row_count in stream_totals.items()
+    ]
+
+
 def extract_airbyte_text_stats(payload: Any) -> dict[str, Any]:
     text_values = iter_string_values(payload)
     if not text_values:
@@ -1454,21 +1737,44 @@ def extract_airbyte_text_stats(payload: Any) -> dict[str, Any]:
         ("rows_inserted", r"Finished insert of (\d+) row\(s\)"),
     ]
 
+    metrics: dict[str, Any] = {}
     for text in text_values:
         for metric_name, pattern in text_patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if not match:
-                continue
-            try:
-                return {
-                    metric_name: int(match.group(1)),
-                    "metric_name": metric_name,
-                    "raw_excerpt": text[:500],
-                }
-            except Exception:
-                continue
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                try:
+                    metric_value = int(match.group(1))
+                except Exception:
+                    continue
 
-    return {}
+                current_value = metrics.get(metric_name)
+                if current_value is None or metric_value > current_value:
+                    metrics[metric_name] = metric_value
+                    metrics[f"{metric_name}_excerpt"] = text[:500]
+
+    if not metrics:
+        return {}
+
+    metric_priority = [
+        "rows_inserted",
+        "records_committed",
+        "records_synced",
+        "records_emitted",
+        "records_extracted",
+    ]
+    for metric_name in metric_priority:
+        metric_value = metrics.get(metric_name)
+        if isinstance(metric_value, int) and metric_value > 0:
+            metrics["metric_name"] = metric_name
+            metrics["raw_excerpt"] = metrics.get(f"{metric_name}_excerpt")
+            return metrics
+
+    for metric_name in metric_priority:
+        if metric_name in metrics:
+            metrics["metric_name"] = metric_name
+            metrics["raw_excerpt"] = metrics.get(f"{metric_name}_excerpt")
+            return metrics
+
+    return metrics
 
 
 def fetch_batch_row_totals(batch_id: str) -> dict[str, int | None]:
@@ -1486,7 +1792,11 @@ select
     coalesce(sum(
         case
             when STEP_NAME = 'DBT_RUN' and STATUS = 'SUCCESS'
-                then coalesce(try_to_number(regexp_substr(DETAILS, 'rows_affected=([0-9]+)', 1, 1, 'e', 1)), 0)
+                then coalesce(
+                    try_to_number(regexp_substr(DETAILS, 'rows_affected_final=([0-9]+)', 1, 1, 'e', 1)),
+                    try_to_number(regexp_substr(DETAILS, 'rows_affected=([0-9]+)', 1, 1, 'e', 1)),
+                    0
+                )
             else 0
         end
     ), 0) as ROWS_AFFECTED
