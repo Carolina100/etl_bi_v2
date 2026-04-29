@@ -28,9 +28,10 @@ As DAGs principais ficaram separadas por responsabilidade:
   3. registra auditoria de fim da extracao (`REGISTER_EXTRACT_END`)
 
 - `load_dw_dbt_dimensions_dag`
-  1. executa `dbt build` no projeto `dbt/solix_dbt`
+  1. executa `dbt run` no projeto `dbt/solix_dbt` por padrao
   2. roda os modelos informados no `conf`
   3. usa o watermark do proprio modelo para fazer incremental
+  4. aceita `dbt_command=build` no `conf` para execucoes de validacao/HML com testes
 
 - `orchestrate_ds_dw_dimensions_dag`
   1. dispara `load_ds_airbyte_dimensions_dag`

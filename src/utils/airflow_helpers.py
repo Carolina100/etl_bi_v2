@@ -141,6 +141,7 @@ def run_dbt_command(
     select_models: list[str],
     dbt_vars: dict[str, Any] | None = None,
     full_refresh: bool = False,
+    dbt_command: str = "run",
 ) -> dict[str, Any]:
     ensure_env_var("SNOWFLAKE_ACCOUNT")
     ensure_env_var("SNOWFLAKE_USER")
@@ -154,7 +155,13 @@ def run_dbt_command(
     target_dir = project_path / f"target_airflow_{uuid.uuid4().hex[:8]}"
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    command = ["dbt", "build", "--no-partial-parse", "--select", *select_models]
+    normalized_dbt_command = dbt_command.strip().lower()
+    if normalized_dbt_command not in {"run", "build"}:
+        raise AirflowFailException(
+            f"Comando dbt invalido: {dbt_command}. Use apenas 'run' ou 'build'."
+        )
+
+    command = ["dbt", normalized_dbt_command, "--no-partial-parse", "--select", *select_models]
     if full_refresh:
         command.append("--full-refresh")
     if dbt_vars:
@@ -297,11 +304,14 @@ def run_airbyte_cloud_sync(
     }
 
 
-def open_snowflake_connection() -> snowflake.connector.SnowflakeConnection:
+def open_snowflake_connection(
+    *,
+    role_env_var: str = "SNOWFLAKE_ROLE_DBT",
+) -> snowflake.connector.SnowflakeConnection:
     account = ensure_env_var("SNOWFLAKE_ACCOUNT")
     user = ensure_env_var("SNOWFLAKE_USER")
     warehouse = ensure_env_var("SNOWFLAKE_WAREHOUSE")
-    role = ensure_env_var("SNOWFLAKE_ROLE_DBT")
+    role = ensure_env_var(role_env_var)
     private_key_path = ensure_env_var("SNOWFLAKE_PRIVATE_KEY_PATH")
     passphrase = os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", "")
 
@@ -1836,11 +1846,15 @@ where BATCH_ID = '{escaped_batch_id}'
             connection.close()
 
 
-def execute_snowflake_sql(*, sql: str) -> dict[str, int | None]:
+def execute_snowflake_sql(
+    *,
+    sql: str,
+    role_env_var: str = "SNOWFLAKE_ROLE_DBT",
+) -> dict[str, int | None]:
     connection = None
     cursor = None
     try:
-        connection = open_snowflake_connection()
+        connection = open_snowflake_connection(role_env_var=role_env_var)
         cursor = connection.cursor()
         cursor.execute(sql)
         rows_affected = cursor.rowcount

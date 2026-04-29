@@ -33,6 +33,10 @@ def run_dbt(**context: Any) -> dict[str, Any]:
     dag_run = context.get("dag_run")
     dag_conf = dag_run.conf if dag_run and dag_run.conf else {}
     models = parse_string_list(dag_conf.get("models", context["params"].get("models")))
+    dbt_command = str(dag_conf.get("dbt_command", context["params"].get("dbt_command", "run")) or "run").strip().lower()
+    if dbt_command not in {"run", "build"}:
+        raise AirflowFailException("Parametro dbt_command invalido. Use apenas 'run' ou 'build'.")
+
     if not models:
         raise AirflowFailException(
             "Parametro obrigatorio ausente: models. "
@@ -59,7 +63,7 @@ def run_dbt(**context: Any) -> dict[str, Any]:
     batch_id = get_audit_batch_id(context)
     watermark_pipeline_names = derive_watermark_pipeline_names(models)
     source_name = "DBT"
-    details = "mode=incremental"
+    details = f"mode=incremental dbt_command={dbt_command}"
 
     for pipeline_name in watermark_pipeline_names:
         mark_pipeline_watermark_running(
@@ -80,6 +84,7 @@ def run_dbt(**context: Any) -> dict[str, Any]:
         details=details,
         select_models=models,
         dbt_vars=dbt_vars,
+        dbt_command=dbt_command,
         execution_order=1,
         watermark_pipeline_names=watermark_pipeline_names,
     )
@@ -106,6 +111,7 @@ with DAG(
     params={
         "dbt_vars": {},
         "models": [],
+        "dbt_command": "run",
     },
     on_failure_callback=airflow_failure_alert_callback,
 ) as dag:
@@ -128,6 +134,7 @@ def execute_dbt_step(
     details: str,
     select_models: list[str],
     dbt_vars: dict[str, Any],
+    dbt_command: str,
     execution_order: int,
     watermark_pipeline_names: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -152,6 +159,7 @@ def execute_dbt_step(
             select_models=select_models,
             dbt_vars=dbt_vars,
             full_refresh=False,
+            dbt_command=dbt_command,
         )
         run_results = result.get("run_results", {})
         rows_processed = int(run_results.get("rows_affected_total") or 0)

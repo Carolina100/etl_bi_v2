@@ -50,6 +50,7 @@ def build_dimensions_incremental_conf(
     raw_tables: list[str],
     watermark_pipeline_name: str,
     dbt_vars: dict[str, Any] | None = None,
+    dbt_command: str = "run",
     airbyte_timeout_seconds: int = 3600,
     airbyte_poll_interval_seconds: int = 15,
 ) -> dict[str, Any]:
@@ -57,6 +58,7 @@ def build_dimensions_incremental_conf(
         "airbyte_connection_id": airbyte_connection_id,
         "models": models,
         "dbt_vars": dbt_vars or {},
+        "dbt_command": dbt_command,
         "cleanup_raw_specs": build_raw_cleanup_specs(
             raw_tables=raw_tables,
             entity_label=entity_label,
@@ -75,6 +77,7 @@ def build_dimensions_domain_conf(
     watermark_pipeline_name: str,
     domain_label: str = "dimensions",
     dbt_vars: dict[str, Any] | None = None,
+    dbt_command: str = "run",
     airbyte_timeout_seconds: int = 3600,
     airbyte_poll_interval_seconds: int = 15,
 ) -> dict[str, Any]:
@@ -94,6 +97,7 @@ def build_dimensions_domain_conf(
         "airbyte_connection_id": airbyte_connection_id,
         "models": models,
         "dbt_vars": dbt_vars or {},
+        "dbt_command": dbt_command,
         "cleanup_raw_specs": build_raw_cleanup_specs(
             raw_tables=raw_tables,
             entity_label=domain_label,

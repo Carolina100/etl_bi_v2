@@ -120,7 +120,7 @@ services:
     command: airflow celery worker -q dbt
     environment:
       <<: *airflow-env
-      SNOWFLAKE_PRIVATE_KEY_PATH: /opt/airflow/project/secrets/snowflake/ETL_KEYPAIR.p8
+      SNOWFLAKE_PRIVATE_KEY_PATH: /opt/airflow/project/secrets/snowflake/USR_DBT_KEYPAIR.p8
     depends_on:
       airflow-apiserver:
         condition: service_started

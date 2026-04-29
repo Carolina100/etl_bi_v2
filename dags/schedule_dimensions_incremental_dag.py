@@ -75,6 +75,9 @@ dag: DAG = create_domain_scheduler_dag(
             "ds_sx_fazenda_d",
             "stg_ds__sx_fazenda_d",
             "dim_sx_fazenda_d",
+            "ds_sx_frente_d",
+            "stg_ds__sx_frente_d",
+            "dim_sx_frente_d",
             # Quando novas dimensoes entrarem na mesma connection do Airbyte,
             # adicionar os modelos aqui.
         ],
@@ -85,6 +88,7 @@ dag: DAG = create_domain_scheduler_dag(
             "SOLIX_BI.RAW.VW_SX_EQUIPAMENTO_D",
             "SOLIX_BI.RAW.VW_SX_OPERACAO_D",
             "SOLIX_BI.RAW.VW_SX_FAZENDA_D",
+            "SOLIX_BI.RAW.VW_SX_FRENTE_D",
             # Quando outras views de dimensao entrarem na mesma connection,
             # adicionar aqui tambem.
         ],

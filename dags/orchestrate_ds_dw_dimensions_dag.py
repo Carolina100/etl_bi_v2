@@ -141,14 +141,17 @@ def cleanup_raw_after_success(**context: Any) -> dict[str, Any]:
             step_name=spec.get("step_name", f"CLEANUP_RAW_{execution_order}"),
             source_name="RETENTION",
             target_name=spec["target_name"],
-                status=AUDIT_STATUS_STARTED,
-                details=spec.get("description", "cleanup tecnico do RAW apos sucesso do pipeline"),
+            status=AUDIT_STATUS_STARTED,
+            details=spec.get("description", "cleanup tecnico do RAW apos sucesso do pipeline"),
             execution_order=execution_order,
             started_at=started_at,
         )
 
         try:
-            execution_result = execute_snowflake_sql(sql=spec["sql"])
+            execution_result = execute_snowflake_sql(
+                sql=spec["sql"],
+                role_env_var="SNOWFLAKE_ROLE_RAW_CLEANUP",
+            )
             rows_affected = execution_result.get("rows_affected")
             if rows_affected is not None:
                 total_rows_deleted += int(rows_affected)
@@ -247,6 +250,7 @@ with DAG(
             "parent_batch_id": "{{ dag_run.run_id }}",
             "models": "{{ dag_run.conf.get('models', []) | tojson }}",
             "dbt_vars": "{{ dag_run.conf.get('dbt_vars', {}) | tojson }}",
+            "dbt_command": "{{ dag_run.conf.get('dbt_command', 'run') }}",
             "watermark_pipeline_name": "{{ dag_run.conf.get('watermark_pipeline_name', '') }}",
         },
         wait_for_completion=True,

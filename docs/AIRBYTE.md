@@ -68,7 +68,8 @@ Este documento cobre:
   - constroi `staging`, `dimensions` e `facts` na camada `DW`
 
 - Airflow
-  - executa `dbt build`
+  - executa `dbt run` em producao
+  - pode executar `dbt build` em HML/validacao quando `dbt_command=build`
   - opcionalmente dispara e monitora syncs do Airbyte via API
   - nao deve reimplementar a extracao das fontes neste repositorio
 

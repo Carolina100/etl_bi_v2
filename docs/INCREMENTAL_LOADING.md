@@ -58,7 +58,7 @@ Essas decisoes passam a ficar:
 
 O Airflow pode participar de duas formas:
 
-- executar apenas o `dbt build`, assumindo que o `DS` ja esta sincronizado
+- executar apenas o `dbt run`, assumindo que o `DS` ja esta sincronizado
 - disparar a sync do Airbyte via API e, depois, executar o `dbt`
 
 O Airflow nao deve reimplementar a logica incremental da extracao.

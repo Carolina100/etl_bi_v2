@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: dim_sx_frente_d
+    description: "Dimensao DW de frentes alimentada a partir do DS."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ID_CLIENTE
+              - CD_CORPORATIVO
+              - CD_REGIONAL
+              - CD_UNIDADE
+              - CD_FRENTE
+    columns:
+      - name: SK_FRENTE
+        description: "Surrogate key da dimensao."
+        tests:
+          - not_null
+          - unique
+      - name: ID_CLIENTE
+        tests:
+          - not_null
+      - name: CD_CORPORATIVO
+        tests:
+          - not_null
+      - name: CD_REGIONAL
+        tests:
+          - not_null
+      - name: CD_UNIDADE
+        tests:
+          - not_null
+      - name: CD_FRENTE
+        tests:
+          - not_null
+      - name: DESC_CORPORATIVO  
+      - name: DESC_REGIONAL
+      - name: DESC_UNIDADE
+      - name: DESC_FRENTE
+      - name: FG_ATIVO
+        tests:
+          - not_null
+      - name: ETL_BATCH_ID
+        tests:
+          - not_null
+      - name: BI_CREATED_AT
+        tests:
+          - not_null
+      - name: BI_UPDATED_AT
+        tests:
+          - not_null
